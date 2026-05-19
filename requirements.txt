@@ -1,0 +1,5 @@
+pyqt6-sip
+requests
+flask-cors
+flask
+psutil
