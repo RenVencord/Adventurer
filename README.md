@@ -34,7 +34,7 @@ I will hopefully have a build in release soon, but for now:
 1. [Build Vencord](https://docs.vencord.dev/installing/)
 2. Clone this repository
     ```bash
-    git clone https://github.com/rendotgay/Adventurer.git
+    git clone https://github.com/RenVencord/Adventurer.git
     ```
 3. Copy the `adventurer` folder into `Vencord/src/userplugins`
 4. **Optional:** For the companion app, download [Python >=3.7](https://www.python.org/downloads/)
