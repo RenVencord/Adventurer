@@ -11,14 +11,10 @@ let running = false;
 const queue: any[] = [];
 const seen = new Set<string>();
 
-// Tracks quest IDs seen at plugin start - used to detect truly new quests
 const _knownQuestIds = new Set<string>();
 let _questIdsInitialized = false;
 
-// Background interval handler for periodic keep-alive heartbeats
 let _heartbeatIntervalHandle: any = null;
-
-// --- Settings ---
 
 const SERVER_DEFAULT_PORT = 5000;
 
@@ -84,13 +80,13 @@ const settings = definePluginSettings({
         hidden: () => !settings.store.enableGameTracking,
         options: [
             {
-                label: "Internal - use Discord's internal RUNNING_GAME_SET_DEBUG_GAME mechanism (recommended)",
-                value: "debug",
-                default: true
+                label: "Risky - use Discord's internal mechanism",
+                value: "debug"
             },
             {
-                label: "Server - use the local Python server (legacy)",
-                value: "server"
+                label: "Safe - use the local Python server",
+                value: "server",
+                default: true
             }
         ],
         async onChange(newMode: string) {
@@ -152,8 +148,6 @@ const settings = definePluginSettings({
     }
 });
 
-// --- User identity ---
-
 function getCurrentUserId(): string {
     return UserStore?.getCurrentUser?.()?.id ?? "unknown";
 }
@@ -169,8 +163,6 @@ function getCurrentAvatarUrl(): string | null {
     if (!user) return null;
     return user.getAvatarURL(undefined, 64, false) ?? null;
 }
-
-// --- Heartbeat ---
 
 let _lastHeartbeatQuestIds: string = "";
 
@@ -200,7 +192,6 @@ async function reportActiveStatus(questId: string | null, quest: any | null, sta
 }
 
 async function sendHeartbeat(force = false) {
-    // Only send quests that are accepted by the user and have not expired
     const all = getAllQuests().filter(q => q?.userStatus !== null && !isQuestExpired(q));
 
     const fingerprint = all.map(q => {
@@ -241,8 +232,6 @@ async function sendHeartbeat(force = false) {
     }
 }
 
-// --- New quest detection (client-side) ---
-
 function initKnownQuests() {
     if (_questIdsInitialized) return;
     for (const q of getAllQuests()) {
@@ -258,8 +247,6 @@ function getOrbQuantity(quest: any): number {
     }
     return 0;
 }
-
-// --- Quest video patching ---
 
 let patchedVideo: HTMLVideoElement | null = null;
 let originalPause: (() => void) | null = null;
@@ -403,13 +390,9 @@ function stopVideoObserver() {
     console.log("[Adventurer] Video observer stopped");
 }
 
-// --- Helpers ---
-
 function sleep(ms: number) {
     return new Promise(res => setTimeout(res, ms));
 }
-
-// --- Debug game spoof ---
 
 let _debugGameQuestId: string | null = null;
 
@@ -440,7 +423,6 @@ async function launchGameDebug(quest: any): Promise<boolean> {
     const range = Math.max(0, maxMs - minMs);
     const startDelay = minMs + Math.random() * range;
     
-    // Compute exact end timestamp once and sync it over
     const endsAt = Date.now() + startDelay;
     await reportActiveStatus(quest.id, quest, { type: "waiting", endsAt });
     
@@ -471,8 +453,6 @@ async function launchGameDebug(quest: any): Promise<boolean> {
     console.log(`[Adventurer] Debug game set: ${appName} (${exeName}, pid ${pid})`);
     return true;
 }
-
-// --- Game launch / stop ---
 
 async function stopGame(questName?: string) {
     if (settings.store.gameTrackingMode === "debug") {
@@ -546,8 +526,6 @@ async function launchGame(appId: string, quest: any): Promise<boolean> {
     }
 }
 
-// --- Completion tracking ---
-
 async function waitForCompletion(quest: any, taskKey: string, target: number, questName: string) {
     if (settings.store.gameTrackingMode === "debug") {
         await new Promise<void>(resolve => {
@@ -614,8 +592,6 @@ async function waitForCompletion(quest: any, taskKey: string, target: number, qu
         }
     }
 }
-
-// --- Queue runner ---
 
 async function runQueue() {
     if (running) return;
