@@ -1217,14 +1217,47 @@ class MainWindow(QMainWindow):
 
 
 def run_gui():
-    def handle_exception(exc_type, exc_value, exc_traceback):
-        if issubclass(exc_type, KeyboardInterrupt):
-            sys.__excepthook__(exc_type, exc_value, exc_traceback)
+    def exception_hook(exctype, value, tb):
+        if issubclass(exctype, KeyboardInterrupt):
+            sys.__excepthook__(exctype, value, tb)
             return
-        print("Uncaught internal GUI exception intercepted:")
-        traceback.print_exception(exc_type, exc_value, exc_traceback)
 
-    sys.excepthook = handle_exception
+        import traceback
+        tb_lines = traceback.format_exception(exctype, value, tb)
+        tb_text = "".join(tb_lines)
+
+        try:
+            from PyQt6.QtWidgets import QMessageBox, QApplication
+            app = QApplication.instance()
+            if app is None:
+                app = QApplication(sys.argv)
+                
+            msg_box = QMessageBox()
+            msg_box.setIcon(QMessageBox.Icon.Critical)
+            msg_box.setWindowTitle("Adventurer - Application Crash")
+            msg_box.setText("An unexpected error occurred and the application has crashed.")
+            msg_box.setInformativeText("Please see the detailed traceback below for error details.")
+            msg_box.setDetailedText(tb_text)
+            msg_box.setStandardButtons(QMessageBox.StandardButton.Ok)
+            msg_box.exec()
+        except Exception:
+            try:
+                import ctypes
+                ctypes.windll.user32.MessageBoxW(
+                    0,
+                    f"An unexpected error occurred and the application has crashed.\n\n"
+                    f"Error:\n{exctype.__name__}: {value}\n\n"
+                    f"Traceback:\n{tb_text}",
+                    "Adventurer - Crash",
+                    0x10  # MB_ICONERROR
+                )
+            except Exception:
+                print("Failed to show GUI message box for crash.", file=sys.stderr)
+                print(tb_text, file=sys.stderr)
+                
+        sys.exit(1)
+
+    sys.excepthook = exception_hook
 
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)
