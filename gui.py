@@ -3,13 +3,14 @@ import sys
 import time
 import urllib.request
 import traceback
+import json
 from datetime import datetime
 
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QScrollArea, QFrame, QSystemTrayIcon, QMenu, QSizePolicy,
     QDialog, QCheckBox, QSpinBox, QFormLayout, QDialogButtonBox,
-    QTabWidget, QPlainTextEdit, QToolButton
+    QTabWidget, QPlainTextEdit, QToolButton, QComboBox
 )
 from PyQt6.QtCore import Qt, QTimer, QThread, pyqtSignal, QSize, QRect, QByteArray, QBuffer, QIODevice
 from PyQt6.QtGui import (
@@ -38,7 +39,37 @@ QUEST_ICON_SVG_PATH = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "assets", "quest_icon.svg"
 )
 
+PREFS_FILE = "adventurer_settings.json"
 ORB_ICON_BASE64 = ""
+
+
+def load_prefs() -> dict:
+    if os.path.exists(PREFS_FILE):
+        try:
+            with open(PREFS_FILE, "r") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {
+        "orbs_only": True,
+        "min_orbs": 0,
+        "notify_video": True,
+        "log_heartbeats": False,
+        "log_progress": False,
+        "log_completion": True,
+        "log_accounts": True,
+        "log_stubs": True,
+        "stub_cleanup_mode": "days",
+        "stub_cleanup_days": 7
+    }
+
+
+def save_prefs(prefs: dict):
+    try:
+        with open(PREFS_FILE, "w") as f:
+            json.dump(prefs, f)
+    except Exception:
+        pass
 
 
 def _load_quest_svg(size: int = 32) -> QPixmap | None:
@@ -52,6 +83,18 @@ def _load_quest_svg(size: int = 32) -> QPixmap | None:
         renderer.render(p)
         p.end()
         return pm if not pm.isNull() else None
+    except Exception:
+        return None
+
+def _load_logo_png(size: int = 72) -> QPixmap | None:
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "logo.png")
+    if not os.path.exists(path):
+        return None
+    try:
+        pm = QPixmap(path)
+        if pm.isNull():
+            return None
+        return pm
     except Exception:
         return None
 
@@ -293,6 +336,7 @@ class RingWidget(QWidget):
     def paintEvent(self, _):
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
         s = self._size
         rw = self._ring_width
         inner = s - rw * 2
@@ -301,16 +345,16 @@ class RingWidget(QWidget):
         p.setBrush(Qt.BrushStyle.NoBrush)
         p.drawEllipse(rw // 2, rw // 2, s - rw, s - rw)
 
+        p.setBrush(QBrush(BG_MID))
+        p.setPen(Qt.PenStyle.NoPen)
+        p.drawEllipse(rw, rw, inner, inner)
+
         if self._pixmap:
             path = QPainterPath()
             path.addEllipse(rw, rw, inner, inner)
             p.setClipPath(path)
             p.drawPixmap(rw, rw, inner, inner, self._pixmap)
             p.setClipping(False)
-        else:
-            p.setBrush(QBrush(BG_MID))
-            p.setPen(Qt.PenStyle.NoPen)
-            p.drawEllipse(rw, rw, inner, inner)
 
         if self._progress > 0:
             grad = QConicalGradient(s / 2, s / 2, 90)
@@ -525,6 +569,7 @@ class ActiveQuestPanel(QWidget):
         self._hero_loader: ImageLoader | None = None
         self._icon_loader: ImageLoader | None = None
         self._current_quest_id: str | None = None
+        self._default_icon: QPixmap | None = _load_logo_png(72)
 
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
 
@@ -542,6 +587,7 @@ class ActiveQuestPanel(QWidget):
         info_row.setSpacing(16)
 
         self.ring = RingWidget(size=72, ring_width=5)
+        self.ring.set_pixmap(self._default_icon)
         info_row.addWidget(self.ring, 0, Qt.AlignmentFlag.AlignVCenter)
 
         text_col = QVBoxLayout()
@@ -577,7 +623,7 @@ class ActiveQuestPanel(QWidget):
             self.orb_lbl.setText("")
             self.prog_lbl.setText("")
             self.ring.set_progress(0.0)
-            self.ring.set_pixmap(None)
+            self.ring.set_pixmap(self._default_icon)
             self._current_quest_id = None
             return
 
@@ -611,6 +657,8 @@ class ActiveQuestPanel(QWidget):
                 self._icon_loader = ImageLoader(icon_url, QSize(72, 72))
                 self._icon_loader.loaded.connect(lambda _, pm: self.ring.set_pixmap(pm))
                 self._icon_loader.start()
+            else:
+                self.ring.set_pixmap(self._default_icon)
 
 
 class BannerBar(QLabel):
@@ -642,8 +690,9 @@ class BannerBar(QLabel):
 class SettingsDialog(QDialog):
     def __init__(self, prefs: dict, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Notification Settings")
-        self.setFixedWidth(340)
+        self._prefs = prefs
+        self.setWindowTitle("Adventurer Settings")
+        self.setFixedWidth(360)
         self.setStyleSheet(f"""
             QDialog {{ background: {BG_DARK.name()}; color: {TEXT_PRIMARY.name()}; }}
             QLabel {{ color: {TEXT_PRIMARY.name()}; }}
@@ -687,6 +736,115 @@ class SettingsDialog(QDialog):
         self.chk_notify_video.setChecked(prefs.get("notify_video", True))
         form.addRow(self.chk_notify_video)
 
+        div = QFrame()
+        div.setFrameShape(QFrame.Shape.HLine)
+        div.setStyleSheet(f"background: {BORDER.name()};")
+        form.addRow(div)
+
+        self.combo_cleanup = QComboBox()
+        self.combo_cleanup.setStyleSheet(f"""
+            QComboBox {{
+                background: {BG_CARD.name()};
+                color: {TEXT_PRIMARY.name()};
+                border: 1px solid {BORDER.name()};
+                border-radius: 4px;
+                padding: 3px 6px;
+            }}
+            QComboBox QAbstractItemView {{
+                background: {BG_CARD.name()};
+                color: {TEXT_PRIMARY.name()};
+                selection-background-color: {ACCENT_BLUE.name()};
+            }}
+        """)
+        self.combo_cleanup.addItem("Save for X days", "days")
+        self.combo_cleanup.addItem("Clean on quest end", "always")
+        self.combo_cleanup.addItem("Never clean", "never")
+
+        mode = prefs.get("stub_cleanup_mode", "days")
+        idx = self.combo_cleanup.findData(mode)
+        if idx >= 0:
+            self.combo_cleanup.setCurrentIndex(idx)
+
+        form.addRow("Stub Cleanup:", self.combo_cleanup)
+
+        self.spin_cleanup_days = QSpinBox()
+        self.spin_cleanup_days.setRange(0, 365)
+        self.spin_cleanup_days.setValue(prefs.get("stub_cleanup_days", 7))
+        form.addRow("Days to keep stubs:", self.spin_cleanup_days)
+
+        self.combo_cleanup.currentIndexChanged.connect(self._update_spin_state)
+        self._update_spin_state()
+
+        layout.addLayout(form)
+
+        btns = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        btns.accepted.connect(self.accept)
+        btns.rejected.connect(self.reject)
+        layout.addWidget(btns)
+
+    def _update_spin_state(self):
+        self.spin_cleanup_days.setEnabled(self.combo_cleanup.currentData() == "days")
+
+    def get_prefs(self) -> dict:
+        p = dict(self._prefs)
+        p["orbs_only"] = self.chk_orbs_only.isChecked()
+        p["min_orbs"] = self.spin_min_orbs.value()
+        p["notify_video"] = self.chk_notify_video.isChecked()
+        p["stub_cleanup_mode"] = self.combo_cleanup.currentData()
+        p["stub_cleanup_days"] = self.spin_cleanup_days.value()
+        return p
+
+
+class LoggingSettingsDialog(QDialog):
+    def __init__(self, prefs: dict, parent=None):
+        super().__init__(parent)
+        self._prefs = prefs
+        self.setWindowTitle("Logging Settings")
+        self.setFixedWidth(360)
+        self.setStyleSheet(f"""
+            QDialog {{ background: {BG_DARK.name()}; color: {TEXT_PRIMARY.name()}; }}
+            QLabel {{ color: {TEXT_PRIMARY.name()}; }}
+            QCheckBox {{ color: {TEXT_PRIMARY.name()}; }}
+            QPushButton {{
+                background: {ACCENT_BLUE.name()};
+                color: white;
+                border: none;
+                border-radius: 4px;
+                padding: 6px 16px;
+                font-weight: 700;
+            }}
+            QPushButton:hover {{ background: #4752c4; }}
+        """)
+
+        layout = QVBoxLayout(self)
+        layout.setSpacing(16)
+        layout.setContentsMargins(20, 20, 20, 20)
+
+        form = QFormLayout()
+        form.setSpacing(10)
+
+        self.chk_log_heartbeats = QCheckBox("Heartbeat synchronizations")
+        self.chk_log_heartbeats.setChecked(prefs.get("log_heartbeats", False))
+        form.addRow(self.chk_log_heartbeats)
+
+        self.chk_log_accounts = QCheckBox("Account connections & drops")
+        self.chk_log_accounts.setChecked(prefs.get("log_accounts", True))
+        form.addRow(self.chk_log_accounts)
+
+        self.chk_log_progress = QCheckBox("Quest progress updates")
+        self.chk_log_progress.setChecked(prefs.get("log_progress", False))
+        form.addRow(self.chk_log_progress)
+
+        self.chk_log_completion = QCheckBox("Quest completions")
+        self.chk_log_completion.setChecked(prefs.get("log_completion", True))
+        form.addRow(self.chk_log_completion)
+
+        self.chk_log_stubs = QCheckBox("Stub creation & cleanup")
+        self.chk_log_stubs.setChecked(prefs.get("log_stubs", True))
+        form.addRow(self.chk_log_stubs)
+
         layout.addLayout(form)
 
         btns = QDialogButtonBox(
@@ -697,11 +855,13 @@ class SettingsDialog(QDialog):
         layout.addWidget(btns)
 
     def get_prefs(self) -> dict:
-        return {
-            "orbs_only": self.chk_orbs_only.isChecked(),
-            "min_orbs": self.spin_min_orbs.value(),
-            "notify_video": self.chk_notify_video.isChecked(),
-        }
+        p = dict(self._prefs)
+        p["log_heartbeats"] = self.chk_log_heartbeats.isChecked()
+        p["log_accounts"] = self.chk_log_accounts.isChecked()
+        p["log_progress"] = self.chk_log_progress.isChecked()
+        p["log_completion"] = self.chk_log_completion.isChecked()
+        p["log_stubs"] = self.chk_log_stubs.isChecked()
+        return p
 
 
 class UserAvatarButton(QToolButton):
@@ -793,7 +953,20 @@ class MainWindow(QMainWindow):
         self._app_icon = self._load_app_icon()
         self.setWindowIcon(self._app_icon)
 
-        self._prefs = {"orbs_only": True, "min_orbs": 0, "notify_video": True}
+        self._prefs = load_prefs()
+        server_state.set_log_settings({
+            "heartbeats": self._prefs.get("log_heartbeats", False),
+            "progress": self._prefs.get("log_progress", False),
+            "completion": self._prefs.get("log_completion", True),
+            "accounts": self._prefs.get("log_accounts", True),
+            "stubs": self._prefs.get("log_stubs", True)
+        })
+        server_state.set_stub_cleanup(
+            self._prefs.get("stub_cleanup_mode", "days"),
+            self._prefs.get("stub_cleanup_days", 7)
+        )
+
+        self._force_quit = False
         self._last_quest_ids: list[str] = []
         self._last_active_id: str | None = None
         self._last_user_ids: list[str] = []
@@ -896,7 +1069,7 @@ class MainWindow(QMainWindow):
         show_action = QAction("Show", self)
         show_action.triggered.connect(self._show_from_tray)
         quit_action = QAction("Quit", self)
-        quit_action.triggered.connect(QApplication.quit)
+        quit_action.triggered.connect(self._quit_app)
         tray_menu.addAction(show_action)
         tray_menu.addSeparator()
         tray_menu.addAction(quit_action)
@@ -913,13 +1086,17 @@ class MainWindow(QMainWindow):
 
         file_menu = menubar.addMenu("File")
         quit_action = QAction("Quit", self)
-        quit_action.triggered.connect(QApplication.quit)
+        quit_action.triggered.connect(self._quit_app)
         file_menu.addAction(quit_action)
 
         settings_menu = menubar.addMenu("Settings")
-        notif_action = QAction("Notifications & Filters...", self)
+        notif_action = QAction("General Settings...", self)
         notif_action.triggered.connect(self._open_settings)
         settings_menu.addAction(notif_action)
+
+        logging_action = QAction("Logging...", self)
+        logging_action.triggered.connect(self._open_logging_settings)
+        settings_menu.addAction(logging_action)
 
         central = QWidget()
         self.setCentralWidget(central)
@@ -980,6 +1157,10 @@ class MainWindow(QMainWindow):
                     self._user_btn.update_users(users, selected_id, self._on_select_user)
                 else:
                     self._user_btn.hide()
+
+            if getattr(self, "_last_selected_id", None) != selected_id:
+                self._previously_incomplete.clear()
+                self._last_selected_id = selected_id
 
             state = server_state.get_state(selected_id)
             quests = state.get("quests", [])
@@ -1196,7 +1377,25 @@ class MainWindow(QMainWindow):
         dlg = SettingsDialog(self._prefs, self)
         if dlg.exec() == QDialog.DialogCode.Accepted:
             self._prefs = dlg.get_prefs()
+            save_prefs(self._prefs)
+            server_state.set_stub_cleanup(
+                self._prefs.get("stub_cleanup_mode", "days"),
+                self._prefs.get("stub_cleanup_days", 7)
+            )
             self._last_quest_ids = []
+
+    def _open_logging_settings(self):
+        dlg = LoggingSettingsDialog(self._prefs, self)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            self._prefs = dlg.get_prefs()
+            save_prefs(self._prefs)
+            server_state.set_log_settings({
+                "heartbeats": self._prefs.get("log_heartbeats", False),
+                "progress": self._prefs.get("log_progress", False),
+                "completion": self._prefs.get("log_completion", True),
+                "accounts": self._prefs.get("log_accounts", True),
+                "stubs": self._prefs.get("log_stubs", True)
+            })
 
     def _show_from_tray(self):
         self.show()
@@ -1207,13 +1406,20 @@ class MainWindow(QMainWindow):
         if reason == QSystemTrayIcon.ActivationReason.Trigger:
             self.hide() if self.isVisible() else self._show_from_tray()
 
+    def _quit_app(self):
+        self._force_quit = True
+        QApplication.quit()
+
     def closeEvent(self, event):
-        event.ignore()
-        self.hide()
-        self._tray.showMessage(
-            "Adventurer", "Running in system tray",
-            self._app_icon, 2000
-        )
+        if getattr(self, "_force_quit", False):
+            event.accept()
+        else:
+            event.ignore()
+            self.hide()
+            self._tray.showMessage(
+                "Adventurer", "Running in system tray",
+                self._app_icon, 2000
+            )
 
 
 def run_gui():
@@ -1231,7 +1437,7 @@ def run_gui():
             app = QApplication.instance()
             if app is None:
                 app = QApplication(sys.argv)
-                
+
             msg_box = QMessageBox()
             msg_box.setIcon(QMessageBox.Icon.Critical)
             msg_box.setWindowTitle("Adventurer - Application Crash")
@@ -1254,7 +1460,7 @@ def run_gui():
             except Exception:
                 print("Failed to show GUI message box for crash.", file=sys.stderr)
                 print(tb_text, file=sys.stderr)
-                
+
         sys.exit(1)
 
     sys.excepthook = exception_hook

@@ -430,3 +430,4 @@ cython_debug/
 fake_games/
 old_server.py
 *.pdn
+temp/
