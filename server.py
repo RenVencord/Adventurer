@@ -43,7 +43,7 @@ CORS(app, origins=[
 ])
 
 BASE_DIR = Path("fake_games")
-STUB_EXE = Path("stub.exe")
+STUB_EXE = Path("stub.exe" if sys.platform == "win32" else "stub")
 DETECTABLE_URL = "https://discord.com/api/v10/applications/detectable"
 
 _detectable_cache: list | None = None
@@ -98,7 +98,7 @@ def ensure_executable(app_data: dict, user_id: str | None = None, force_exe: str
 
     if not exe_path.exists():
         if not STUB_EXE.exists():
-            msg = "stub.exe not found - place it next to server.py"
+            msg = "stub executable not found - place it next to server.py"
             log.error(msg)
             server_state.log_event(f"Error: {msg}", user_id)
             raise FileNotFoundError(msg)
