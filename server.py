@@ -89,7 +89,8 @@ def ensure_executable(app_data: dict, user_id: str | None = None, force_exe: str
             return None
         exe_name = exe_info["name"]
 
-    exe_name = sanitize(exe_name.replace(">", ""))
+    exe_name = exe_name.replace(">", "")
+    exe_name = os.sep.join(exe_name.split("/"))
     if not exe_name.lower().endswith(".exe"):
         exe_name += ".exe"
 
@@ -102,7 +103,7 @@ def ensure_executable(app_data: dict, user_id: str | None = None, force_exe: str
             log.error(msg)
             server_state.log_event(f"Error: {msg}", user_id)
             raise FileNotFoundError(msg)
-        log.info(f"Copying stub.exe -> {exe_path}")
+        log.info(f"Copying stub executable to {exe_path}")
         if server_state.should_log("stubs"):
             server_state.log_event(f"Created new stub for {name}", user_id)
         try:
