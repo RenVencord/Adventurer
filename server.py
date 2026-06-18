@@ -250,7 +250,7 @@ def run():
 
     _kill_all_running()
 
-    proc = launch_exe(exe_path)
+    proc = launch_exe(exe_path.absolute())
     _running[app_id] = proc
 
     quest_id = quest_obj.get("id") if quest_obj else None
