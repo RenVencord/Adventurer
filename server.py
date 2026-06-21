@@ -90,7 +90,13 @@ def ensure_executable(app_data: dict, user_id: str | None = None, force_exe: str
         exe_name = exe_info["name"]
 
     exe_name = exe_name.replace(">", "")
-    exe_name = os.sep.join(exe_name.split("/"))
+    path_sep_split = exe_name.split(os.sep)
+    if len(path_sep_split) > 1:
+        sanitized_split = list(map(lambda split: sanitize(split), path_sep_split))
+        exe_name = os.sep.join(sanitized_split)
+    else:
+        exe_name = sanitize(exe_name)
+
     if not exe_name.lower().endswith(".exe"):
         exe_name += ".exe"
 
