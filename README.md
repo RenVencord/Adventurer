@@ -52,3 +52,9 @@ I will hopefully have a build in release soon, but for now:
     ```bash
    python server.py
     ```
+
+## Planned Features
+- Better multi-account management
+- Better log output management
+- Quest claim fanfare
+- Experiences volume control
