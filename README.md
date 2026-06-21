@@ -4,6 +4,7 @@ A Vencord plugin to automate Discord Quests.
 ## Features
 - Freely tab out of video quests
 - Spoof game exes for play quests
+- One click experiences quests with ESP
 - Notifications when new quests are available
 - Randomized open and close times
 - Companion app for spoofing game exes and tracking quests
@@ -21,6 +22,11 @@ A Vencord plugin to automate Discord Quests.
   - **Quest Start Delay Min** sets the minimum delay for starting and ending the activity
   - **Quest Start Delay Max** sets the maximum delay for starting and ending the activity
 - **Server** utilizes the optional companion app to spawn a stub game process that matches Discord's exe (safer)
+
+### Experiences Quests
+- **Primary Color** sets the color for orb related quest items
+- **Secondary Color** sets the color for any interactable items
+- **Highlight Color** sets the color when highlighting an item
 
 ### Notifications
 - **Server Port** sets the port for the companion app

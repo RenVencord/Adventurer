@@ -431,3 +431,6 @@ fake_games/
 old_server.py
 *.pdn
 temp/
+adventurer/backup.tsx
+adventurer/somewhat_working.tsx
+adventurer_settings.json

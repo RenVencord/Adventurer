@@ -1,11 +1,22 @@
 import { definePluginSettings } from "@api/Settings";
-import definePlugin, { OptionType } from "@utils/types";
+import definePlugin, { OptionType, PluginNative } from "@utils/types";
 import { FluxDispatcher, UserStore, React, RestAPI } from "@webpack/common";
 import { findStoreLazy, findByProps } from "@webpack";
 import { Toasts, Button } from "@webpack/common";
 import { showNotification } from "@api/Notifications";
 
 const QuestStore = findStoreLazy("QuestStore");
+
+// Native (Electron main process) bridge — see native.ts. Only available on
+// desktop builds (official Discord desktop app *or* Vesktop), since it relies
+// on webFrameMain to reach into the cross-origin discordsays.com quest iframe
+// (something the renderer alone can't do). Feature-detected at runtime rather
+// than gated on a single platform flag, since both desktop targets expose it
+// but under different build flags.
+const Native: PluginNative<typeof import("./native")> | null =
+    typeof VencordNative !== "undefined" && (VencordNative as any)?.pluginHelpers?.Adventurer
+        ? (VencordNative as any).pluginHelpers.Adventurer
+        : null;
 
 let running = false;
 const queue: any[] = [];
@@ -142,6 +153,36 @@ const settings = definePluginSettings({
         type: OptionType.NUMBER,
         description: "Port for the local game server (used for heartbeat and server mode)",
         default: SERVER_DEFAULT_PORT
+    },
+    experiencesHack: {
+        type: OptionType.BOOLEAN,
+        description: "In interactive (puzzle/find-item) game quests, highlight interactable objects and trigger all of their functions with one click",
+        default: true,
+        onChange(value: boolean) {
+            if (value) startGameOverlay();
+            else stopGameOverlay();
+        }
+    },
+    experiencesPrimaryColor: {
+        type: OptionType.STRING,
+        description: "Primary highlight color (hex) — the current quest objective",
+        default: "#00ff00",
+        hidden: () => !settings.store.experiencesHack,
+        onChange() { pushOverlayState(); }
+    },
+    experiencesSecondaryColor: {
+        type: OptionType.STRING,
+        description: "Secondary highlight color (hex) — other interactable objects",
+        default: "#ff00ff",
+        hidden: () => !settings.store.experiencesHack,
+        onChange() { pushOverlayState(); }
+    },
+    experiencesHoverColor: {
+        type: OptionType.STRING,
+        description: "Hover color (hex) — hovering interactable objects",
+        default: "#ffff00",
+        hidden: () => !settings.store.experiencesHack,
+        onChange() { pushOverlayState(); }
     },
     notifyNewQuests: {
         type: OptionType.BOOLEAN,
@@ -749,6 +790,435 @@ function stopVideoObserver() {
     if (!videoObserver) return;
     videoObserver.disconnect();
     videoObserver = null;
+}
+
+// ---------------------------------------------------------------------------
+// Interactive game overlay (PlayCanvas quest mini-games)
+//
+// Some quests run an actual mini-game inside a `discordsays.com` iframe. That
+// frame is cross-origin from Discord itself, so the renderer can't reach into
+// it directly (contentDocument/contentWindow.document throws a SecurityError).
+// Injecting the overlay script therefore happens in the Electron main process
+// via native.ts (webFrameMain.executeJavaScript bypasses the renderer-side
+// same-origin restriction). Once the script is running inside the frame,
+// `postMessage` *is* allowed cross-origin, so live toggle/color updates are
+// pushed that way without needing to reinject anything.
+// ---------------------------------------------------------------------------
+
+const OVERLAY_MSG_TAG = "__adventurerOverlay";
+
+function hexToFloatRgb(hex: string): [number, number, number] {
+    const clean = (hex ?? "").replace("#", "").trim();
+    const safe = /^[0-9a-fA-F]{6}$/.test(clean) ? clean : "00ff00";
+    return [
+        parseInt(safe.substring(0, 2), 16) / 255,
+        parseInt(safe.substring(2, 4), 16) / 255,
+        parseInt(safe.substring(4, 6), 16) / 255
+    ];
+}
+
+// Builds the script that runs *inside* the quest iframe's own window (the
+// PlayCanvas context). It's plain JS in a string — it cannot reference
+// anything from this module's scope except what's interpolated in below.
+function buildOverlayScript(): string {
+    const enabled = !!settings.store.experiencesHack;
+    const primary = hexToFloatRgb(settings.store.experiencesPrimaryColor);
+    const secondary = hexToFloatRgb(settings.store.experiencesSecondaryColor);
+    const hover = hexToFloatRgb(settings.store.experiencesHoverColor);
+
+    return `(function () {
+    if (window.${OVERLAY_MSG_TAG}Booting) return;
+    window.${OVERLAY_MSG_TAG}Booting = true;
+
+    let bootAttempts = 0;
+
+    function boot() {
+        const app = (window.pc && window.pc.app) || window.app;
+        const canvasReady = document.querySelector("canvas");
+
+        if (!app || !canvasReady) {
+            bootAttempts++;
+            if (bootAttempts > 200) {
+                console.warn("[Adventurer] Gave up waiting for the PlayCanvas app/canvas after ~50s.");
+                return;
+            }
+            setTimeout(boot, 250);
+            return;
+        }
+
+        if (window.${OVERLAY_MSG_TAG}Installed) return;
+        window.${OVERLAY_MSG_TAG}Installed = true;
+        console.log("[Adventurer] Game overlay installed.");
+
+    const SEE_THROUGH_WALLS = true;
+    const state = {
+        enabled: ${JSON.stringify(enabled)},
+        colorDefault: new pc.Color(${primary[0]}, ${primary[1]}, ${primary[2]}),
+        colorDim: new pc.Color(${secondary[0]}, ${secondary[1]}, ${secondary[2]}),
+        colorHover: new pc.Color(${hover[0]}, ${hover[1]}, ${hover[2]})
+    };
+
+    window.addEventListener("message", function (e) {
+        const data = e.data;
+        if (!data || !data["${OVERLAY_MSG_TAG}"]) return;
+        if (data.type === "state") {
+            state.enabled = !!data.enabled;
+            if (data.primary) state.colorDefault.set(data.primary[0], data.primary[1], data.primary[2]);
+            if (data.secondary) state.colorDim.set(data.secondary[0], data.secondary[1], data.secondary[2]);
+        }
+    });
+
+    const SIGNS = [
+        [-1, -1, -1], [1, -1, -1], [1, 1, -1], [-1, 1, -1],
+        [-1, -1, 1], [1, -1, 1], [1, 1, 1], [-1, 1, 1]
+    ];
+    const EDGES = [
+        [0, 1], [1, 2], [2, 3], [3, 0],
+        [4, 5], [5, 6], [6, 7], [7, 4],
+        [0, 4], [1, 5], [2, 6], [3, 7]
+    ];
+
+    function getHalfExtents(entity) {
+        const c = entity.collision;
+        if (c) {
+            if (c.type === "box" && c.halfExtents) return c.halfExtents;
+            if (c.type === "sphere" && c.radius) return new pc.Vec3(c.radius, c.radius, c.radius);
+            if (c.type === "capsule") {
+                const r = c.radius || 0.5, h = (c.height || 2) / 2;
+                return new pc.Vec3(r, h, r);
+            }
+        }
+        const renderComp = entity.render || entity.model;
+        if (renderComp && renderComp.meshInstances && renderComp.meshInstances.length) {
+            const aabb = renderComp.meshInstances[0].aabb.clone();
+            for (let i = 1; i < renderComp.meshInstances.length; i++) aabb.add(renderComp.meshInstances[i].aabb);
+            const s = entity.getLocalScale();
+            return new pc.Vec3(
+                aabb.halfExtents.x / Math.max(Math.abs(s.x), 0.0001),
+                aabb.halfExtents.y / Math.max(Math.abs(s.y), 0.0001),
+                aabb.halfExtents.z / Math.max(Math.abs(s.z), 0.0001)
+            );
+        }
+        return new pc.Vec3(0.3, 0.3, 0.3);
+    }
+
+    function drawBox(entity, color) {
+        const halfExtents = getHalfExtents(entity);
+        const transform = entity.getWorldTransform();
+        const corners = SIGNS.map(s => {
+            const p = new pc.Vec3(s[0] * halfExtents.x, s[1] * halfExtents.y, s[2] * halfExtents.z);
+            transform.transformPoint(p, p);
+            return p;
+        });
+        EDGES.forEach(([a, b]) => app.drawLine(corners[a], corners[b], color, !SEE_THROUGH_WALLS));
+    }
+
+    const PUZZLE_SCRIPTS = [
+        "collectable", "useItem", "focusItem", "focusItemTakeable", "focusItemUsable",
+        "focusItemNestable", "pushButton", "keypad", "slider", "snappingSlider",
+        "snappingDial", "toggleSwitch", "door", "itemManipulator"
+    ];
+
+    function isPuzzleRelevant(entity) {
+        if (entity.tags.has("blocker")) return false;
+        if (!entity.script) return false;
+        return PUZZLE_SCRIPTS.some(name => !!entity.script[name]);
+    }
+
+    function getInteractables() {
+        const candidates = app.root.findByTag("interactable").length
+            ? app.root.findByTag("interactable")
+            : app.root.findComponents("collision").map(c => c.entity);
+
+        let questKeywords = ["quest", "badge", "unlocked", "complete", "taken"];
+        const uiElements = app.root.findComponents("element");
+
+        uiElements.forEach(el => {
+            if (el.text && el.text.length > 5 && el.text.length < 100) {
+                const txt = el.text.toLowerCase();
+                if (txt.includes("step") || txt.includes("quest") || txt.includes("find") || txt.includes("insert") || txt.includes("collect") || txt.includes("orb")) {
+                    questKeywords = questKeywords.concat(txt.split(/[\\s_.:\\-]+/));
+                    if (el.entity && el.entity.script) {
+                        for (const sName in el.entity.script) {
+                            const inst = el.entity.script[sName];
+                            if (inst) {
+                                for (const key in inst) {
+                                    if (key.toLowerCase().includes("event") && typeof inst[key] === "string" && inst[key].length > 0) {
+                                        questKeywords = questKeywords.concat(inst[key].toLowerCase().split(/[\\s_.:\\-]+/));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        });
+
+        questKeywords = [...new Set(questKeywords)].filter(w => w.length > 3);
+        const safetyWords = ["cube", "holo", "slot", "orb", "passcode", "password", "computer"];
+        questKeywords = questKeywords.concat(safetyWords);
+
+        let highSignalCount = 0;
+        const relevantCandidates = candidates.filter(isPuzzleRelevant);
+
+        relevantCandidates.forEach(entity => {
+            if (!entity.script) {
+                entity.isHighSignal = false;
+                return;
+            }
+            let matchesActiveQuestScope = false;
+            for (const sName in entity.script) {
+                if (sName.startsWith("_")) continue;
+                const instance = entity.script[sName];
+                const attrs = instance.__attributes || {};
+                const verifyPool = [
+                    entity.name, sName, attrs.mouseUpEvent, attrs.takeEvent, attrs.event,
+                    instance.event, instance.mouseUpEvent, instance.takeEvent
+                ];
+                verifyPool.forEach(val => {
+                    if (typeof val === "string" && val.length > 0) {
+                        const lowerVal = val.toLowerCase();
+                        if (questKeywords.some(word => lowerVal.includes(word))) {
+                            matchesActiveQuestScope = true;
+                        }
+                    }
+                });
+            }
+            entity.isHighSignal = matchesActiveQuestScope;
+            if (matchesActiveQuestScope) highSignalCount++;
+        });
+
+        if (highSignalCount === 0) {
+            relevantCandidates.forEach(entity => { entity.isHighSignal = true; });
+        }
+        return relevantCandidates;
+    }
+
+    let hovered = null;
+    let mouseX = 0;
+    let mouseY = 0;
+
+    const canvas = document.querySelector("canvas");
+
+    let overlay = document.getElementById("adventurer-game-overlay");
+    if (!overlay) {
+        overlay = document.createElement("canvas");
+        overlay.id = "adventurer-game-overlay";
+        overlay.style.position = "absolute";
+        overlay.style.top = "0";
+        overlay.style.left = "0";
+        overlay.style.pointerEvents = "none";
+        overlay.style.zIndex = "2147483647";
+        overlay.width = canvas.width;
+        overlay.height = canvas.height;
+        const parent = canvas.parentElement;
+        if (parent) {
+            parent.style.position = "relative";
+            parent.appendChild(overlay);
+        }
+    }
+
+    const ctx = overlay.getContext("2d");
+    mouseX = canvas.width / 2;
+    mouseY = canvas.height / 2;
+
+    canvas.addEventListener("mousemove", function (e) {
+        const rect = canvas.getBoundingClientRect();
+        mouseX = e.clientX - rect.left;
+        mouseY = e.clientY - rect.top;
+    });
+
+    let interactInputAttempts = 0;
+    const interactInputTimer = setInterval(function () {
+        if (window.interactInput) {
+            clearInterval(interactInputTimer);
+            return;
+        }
+
+        const inputEntity = app.root.findOne(function (node) {
+            return node.script && node.script.interactablesInput;
+        });
+
+        if (inputEntity) {
+            window.interactInput = inputEntity.script.interactablesInput;
+            console.log("[Adventurer] Found interactablesInput on entity:", inputEntity.name);
+            clearInterval(interactInputTimer);
+            return;
+        }
+
+        interactInputAttempts++;
+        if (interactInputAttempts === 20) {
+            // ~10s of trying with nothing found — dump what script names *do*
+            // exist in the scene so it's obvious whether "interactablesInput"
+            // is just the wrong name for this particular quest game.
+            const found = new Set();
+            const scriptComponents = app.root.findComponents("script");
+            scriptComponents.forEach(comp => {
+                for (const key in comp) {
+                    if (key.startsWith("_") || key === "entity" || key === "system" || key === "scripts") continue;
+                    if (typeof comp[key] === "object" && comp[key] !== null) found.add(key);
+                }
+            });
+            console.warn(
+                "[Adventurer] Still haven't found an entity with a 'interactablesInput' script after 10s. " +
+                "Script names actually present in this scene:",
+                [...found].sort()
+            );
+        }
+    }, 500);
+
+    app.on("update", function () {
+        if (!state.enabled) {
+            ctx.clearRect(0, 0, overlay.width, overlay.height);
+            return;
+        }
+
+        if (overlay.width !== canvas.width || overlay.height !== canvas.height) {
+            overlay.width = canvas.width;
+            overlay.height = canvas.height;
+        }
+
+        if (window.interactInput && typeof window.interactInput.raycastInteractables === "function") {
+            try {
+                window.interactInput.raycastInteractables({ x: mouseX, y: mouseY });
+                if (window.interactInput.currentlySelectedInteractable) {
+                    hovered = window.interactInput.currentlySelectedInteractable;
+                } else if (window.interactInput.overInteractable) {
+                    hovered = window.interactInput.overInteractable;
+                } else {
+                    hovered = null;
+                }
+            } catch (e) {}
+        }
+
+        getInteractables().forEach(entity => {
+            let boxColor = state.colorDim;
+            if (entity.isHighSignal) boxColor = state.colorDefault;
+            if (entity === hovered) boxColor = state.colorHover;
+            drawBox(entity, boxColor);
+        });
+
+        ctx.clearRect(0, 0, overlay.width, overlay.height);
+
+        ctx.fillStyle = hovered ? "#ffff00" : "#00ff00";
+        ctx.font = "bold 16px monospace";
+        ctx.fillText(hovered ? "Interactable!" : "Adventurer Injected!", 30, 50);
+        if (hovered && hovered.name) ctx.fillText(hovered.name, 30, 80);
+    });
+
+    function forceInteractDeep(entity) {
+        if (!entity) return;
+        entity.enabled = true;
+        if (entity.collision) entity.collision.enabled = true;
+
+        if (entity.script) {
+            const visited = new Set();
+            function scanForEvents(obj, currentDepth) {
+                currentDepth = currentDepth || 0;
+                if (!obj || typeof obj !== "object" || currentDepth > 5) return;
+                if (visited.has(obj)) return;
+                visited.add(obj);
+                for (const key in obj) {
+                    if (key === "entity" || key === "app" || key === "_callbacks" || key === "system") continue;
+                    try {
+                        const value = obj[key];
+                        if (typeof value === "string" && value.length > 0) {
+                            const k = key.toLowerCase();
+                            if (value.includes(":") || k.includes("event") || k.includes("emit") || k.includes("trigger") || k.includes("success") || k.includes("unlock")) {
+                                app.fire(value);
+                            }
+                        } else if (typeof value === "object" && value !== null) {
+                            scanForEvents(value, currentDepth + 1);
+                        }
+                    } catch (e) {}
+                }
+            }
+            for (const sName in entity.script) {
+                if (sName.startsWith("_")) continue;
+                const instance = entity.script[sName];
+                if (instance.__attributes) scanForEvents(instance.__attributes, 0);
+                scanForEvents(instance, 0);
+                const coreMethods = ["execute", "onUse", "use", "activate", "click", "onInsert", "play"];
+                coreMethods.forEach(method => {
+                    if (typeof instance[method] === "function") {
+                        try { instance[method](); } catch (err) {}
+                    }
+                });
+            }
+        }
+        if (entity.children && entity.children.length > 0) {
+            entity.children.forEach(child => forceInteractDeep(child));
+        }
+    }
+
+    window.addEventListener("mousedown", function (e) {
+        if (!state.enabled) return;
+        if (e.button !== 0) return;
+        if (!hovered) return;
+        forceInteractDeep(hovered);
+    });
+
+    // Local quick-toggle, independent of the Adventurer setting above.
+    window.addEventListener("keydown", function (e) {
+        if (e.key === "b" || e.key === "B") state.enabled = !state.enabled;
+    });
+    } // end boot()
+
+    boot();
+})();`;
+}
+
+// Asks the main process to inject (and auto-reinject on future frame loads)
+// the overlay script into any discordsays.com quest frame under this window.
+async function startGameOverlay() {
+    if (!settings.store.experiencesHack) return;
+    if (!Native) {
+        console.warn("[Adventurer] Game overlay's native bridge isn't available (VencordNative.pluginHelpers.Adventurer is missing). Either you're on a web/extension build (unsupported), or native.ts isn't sitting next to index.tsx in the plugin folder and wasn't picked up by the build.");
+        return;
+    }
+    try {
+        await Native.setOverlayScript(buildOverlayScript());
+    } catch (e) {
+        console.error("[Adventurer] Failed to install game overlay:", e);
+    }
+}
+
+async function stopGameOverlay() {
+    if (!Native) return;
+    try {
+        await Native.clearOverlayScript();
+    } catch (e) {
+        console.error("[Adventurer] Failed to clear game overlay:", e);
+    }
+}
+
+// Live-updates an already-injected overlay (color/enabled changes) without
+// needing to reinject — postMessage works cross-origin even though direct
+// DOM access to the iframe doesn't.
+function pushOverlayState() {
+    if (!settings.store.experiencesHack) return;
+    const enabled = !!settings.store.experiencesHack;
+    const primary = hexToFloatRgb(settings.store.experiencesPrimaryColor);
+    const secondary = hexToFloatRgb(settings.store.experiencesSecondaryColor);
+
+    document.querySelectorAll("iframe").forEach(frame => {
+        try {
+            (frame as HTMLIFrameElement).contentWindow?.postMessage({
+                [OVERLAY_MSG_TAG]: true,
+                type: "state",
+                enabled,
+                primary,
+                secondary
+            }, "*");
+        } catch (e) {
+            // Cross-origin postMessage shouldn't throw, but be defensive anyway.
+        }
+    });
+
+    // Also refresh what gets baked into future frame loads.
+    if (Native) {
+        Native.setOverlayScript(buildOverlayScript()).catch(() => {});
+    }
 }
 
 (window as any).__adventurerFetchAndProcess = fetchAndProcess;
@@ -1909,6 +2379,10 @@ export default definePlugin({
             tryPatchNow();
         }
 
+        if (settings.store.experiencesHack) {
+            startGameOverlay();
+        }
+
         startUIObserver();
         sendHeartbeat(true);
 
@@ -1950,6 +2424,7 @@ export default definePlugin({
 
         stopVideoObserver();
         unpatchQuestVideo();
+        stopGameOverlay();
         stopUIObserver();
 
         queue.length = 0;
