@@ -232,6 +232,8 @@ def run():
             server_state.log_event(f"Error: {msg}", user_id)
             return jsonify({"error": "app not found"}), 404
 
+    log.info(f"Discord executables: {app_data.get("executables", [])}")
+
     try:
         exe_path = ensure_executable(app_data, user_id, force_exe)
     except FileNotFoundError as e:
