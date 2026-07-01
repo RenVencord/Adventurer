@@ -90,7 +90,7 @@ def ensure_executable(app_data: dict, user_id: str | None = None, force_exe: str
         exe_name = exe_info["name"]
 
     exe_name = exe_name.replace(">", "")
-    path_sep_split = exe_name.split(os.sep)
+    path_sep_split = exe_name.split('/')
     if len(path_sep_split) > 1:
         sanitized_split = list(map(lambda split: sanitize(split), path_sep_split))
         exe_name = os.sep.join(sanitized_split)
