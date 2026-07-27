@@ -21,6 +21,19 @@ from PyQt6.QtSvg import QSvgRenderer
 
 import server_state
 
+# ---------------------------------------------------------------------------
+# Path helpers: resolve bundled assets (PyInstaller) and user data directory
+# ---------------------------------------------------------------------------
+APPDATA_DIR = os.path.join(os.path.expanduser("~"), ".Adventurer")
+
+
+def _get_asset_path(relative: str) -> str:
+    """Resolve a path relative to the application assets (handles PyInstaller)."""
+    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+        return os.path.join(sys._MEIPASS, relative)
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), relative)
+
+
 BG_DARKEST = QColor("#0f1012")
 BG_DARK = QColor("#1a1b1e")
 BG_MID = QColor("#232428")
@@ -35,11 +48,9 @@ RING_BG = QColor("#1e1f22")
 
 CDN_BASE = "https://cdn.discordapp.com"
 
-QUEST_ICON_SVG_PATH = os.path.join(
-    os.path.dirname(os.path.abspath(__file__)), "assets", "quest_icon.svg"
-)
+QUEST_ICON_SVG_PATH = _get_asset_path(os.path.join("assets", "quest_icon.svg"))
 
-PREFS_FILE = "adventurer_settings.json"
+PREFS_FILE = os.path.join(APPDATA_DIR, "adventurer_settings.json")
 ORB_ICON_BASE64 = ""
 
 
@@ -66,6 +77,7 @@ def load_prefs() -> dict:
 
 def save_prefs(prefs: dict):
     try:
+        os.makedirs(os.path.dirname(PREFS_FILE), exist_ok=True)
         with open(PREFS_FILE, "w") as f:
             json.dump(prefs, f)
     except Exception:
@@ -87,7 +99,7 @@ def _load_quest_svg(size: int = 32) -> QPixmap | None:
         return None
 
 def _load_logo_png(size: int = 72) -> QPixmap | None:
-    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "logo.png")
+    path = _get_asset_path(os.path.join("assets", "logo.png"))
     if not os.path.exists(path):
         return None
     try:
@@ -135,11 +147,23 @@ def quest_icon_url(quest: dict) -> str | None:
         tile = f"quests/{cfg.get('id', '')}/{tile}"
     if tile:
         return f"{CDN_BASE}/{tile}"
-    app_id = cfg.get("application", {}).get("id") if cfg.get("application") else None
-    if app_id:
-        icon = cfg.get("application", {}).get("icon")
-        if icon:
+    # Old Discord format: config.application contains app info
+    app_obj = cfg.get("application")
+    if app_obj:
+        app_id = app_obj.get("id")
+        icon = app_obj.get("icon")
+        if app_id and icon:
             return f"{CDN_BASE}/app-icons/{app_id}/{icon}.webp"
+    # New Discord format: app info lives inside taskConfigV2 tasks
+    tasks = (cfg.get("taskConfigV2") or {}).get("tasks") or {}
+    for task_key in ["PLAY_ON_DESKTOP", "WATCH_VIDEO"]:
+        task_apps = (tasks.get(task_key) or {}).get("applications") or []
+        if task_apps and isinstance(task_apps, list) and len(task_apps) > 0:
+            app = task_apps[0]
+            app_id = app.get("id")
+            icon = app.get("icon")
+            if app_id and icon:
+                return f"{CDN_BASE}/app-icons/{app_id}/{icon}.webp"
     return None
 
 
@@ -829,7 +853,7 @@ class LoggingSettingsDialog(QDialog):
         self.chk_log_heartbeats.setChecked(prefs.get("log_heartbeats", False))
         form.addRow(self.chk_log_heartbeats)
 
-        self.chk_log_accounts = QCheckBox("Account connections & drops")
+        self.chk_log_accounts = QCheckBox("Account connections && drops")
         self.chk_log_accounts.setChecked(prefs.get("log_accounts", True))
         form.addRow(self.chk_log_accounts)
 
@@ -841,9 +865,13 @@ class LoggingSettingsDialog(QDialog):
         self.chk_log_completion.setChecked(prefs.get("log_completion", True))
         form.addRow(self.chk_log_completion)
 
-        self.chk_log_stubs = QCheckBox("Stub creation & cleanup")
+        self.chk_log_stubs = QCheckBox("Stub creation && cleanup")
         self.chk_log_stubs.setChecked(prefs.get("log_stubs", True))
         form.addRow(self.chk_log_stubs)
+
+        self.chk_log_server = QCheckBox("Server requests")
+        self.chk_log_server.setChecked(prefs.get("log_server", False))
+        form.addRow(self.chk_log_server)
 
         layout.addLayout(form)
 
@@ -861,6 +889,7 @@ class LoggingSettingsDialog(QDialog):
         p["log_progress"] = self.chk_log_progress.isChecked()
         p["log_completion"] = self.chk_log_completion.isChecked()
         p["log_stubs"] = self.chk_log_stubs.isChecked()
+        p["log_server"] = self.chk_log_server.isChecked()
         return p
 
 
@@ -959,7 +988,8 @@ class MainWindow(QMainWindow):
             "progress": self._prefs.get("log_progress", False),
             "completion": self._prefs.get("log_completion", True),
             "accounts": self._prefs.get("log_accounts", True),
-            "stubs": self._prefs.get("log_stubs", True)
+            "stubs": self._prefs.get("log_stubs", True),
+            "server": self._prefs.get("log_server", False)
         })
         server_state.set_stub_cleanup(
             self._prefs.get("stub_cleanup_mode", "days"),
@@ -1038,7 +1068,7 @@ class MainWindow(QMainWindow):
         """)
 
     def _load_app_icon(self) -> QIcon:
-        icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "logo.png")
+        icon_path = _get_asset_path(os.path.join("assets", "logo.png"))
         if os.path.exists(icon_path):
             icon = QIcon(icon_path)
             if not icon.isNull():
@@ -1394,7 +1424,8 @@ class MainWindow(QMainWindow):
                 "progress": self._prefs.get("log_progress", False),
                 "completion": self._prefs.get("log_completion", True),
                 "accounts": self._prefs.get("log_accounts", True),
-                "stubs": self._prefs.get("log_stubs", True)
+                "stubs": self._prefs.get("log_stubs", True),
+                "server": self._prefs.get("log_server", False)
             })
 
     def _show_from_tray(self):

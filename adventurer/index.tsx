@@ -1236,8 +1236,9 @@ function stopGameDebug() {
 }
 
 async function launchGameDebug(quest: any, forceExe?: string): Promise<boolean> {
-    const appId = quest?.config?.application?.id;
-    const appName = quest?.config?.application?.name ?? appId;
+    const appId = quest?.config?.application?.id
+        ?? quest?.config?.taskConfigV2?.tasks?.["PLAY_ON_DESKTOP"]?.applications?.[0]?.id;
+    const appName = quest?.config?.application?.name ?? quest?.config?.messages?.gameTitle ?? appId;
 
     let exeName = `${appName}.exe`;
     let needsPrompt = false;
@@ -1501,8 +1502,10 @@ async function waitForCompletion(quest: any, taskKey: string, target: number, qu
 }
 
 async function runQueue() {
-    if (running) return;
+    if (running) { console.log("[Adventurer] runQueue: skipped (already running)"); return; }
     running = true;
+
+    console.log(`[Adventurer] runQueue: starting with ${queue.length} items`);
 
     while (queue.length > 0) {
         const current = queue.shift();
@@ -1510,6 +1513,7 @@ async function runQueue() {
 
         const { quest, appId, questName, task } = current;
 
+        console.log(`[Adventurer] runQueue: processing ${questName} (isVideo=${task.isVideo})`);
         updateBar({ activeQuestName: questName, error: null, forceKillVisible: false });
 
         if (task.isVideo) {
@@ -1540,11 +1544,13 @@ async function runQueue() {
             }
 
         } else {
-            if (!settings.store.enableGameTracking) continue;
+            if (!settings.store.enableGameTracking) { console.log(`[Adventurer] runQueue: game tracking disabled, skipping ${questName}`); continue; }
 
+            console.log(`[Adventurer] runQueue: calling launchGame for ${questName} (appId=${appId})`);
             await stopGame();
 
             const ok = await launchGame(appId, quest);
+            console.log(`[Adventurer] runQueue: launchGame returned ${ok} for ${questName}`);
             if (!ok) {
                 seen.delete(quest.id);
                 break;
@@ -1667,11 +1673,14 @@ function checkForNewQuests() {
 }
 
 async function processQuests(): Promise<void> {
-    if (running) return;
-
-    await sendHeartbeat();
-    checkForNewQuests();
-
+    // Even if the queue is actively running, still scan for new quests
+    // and add them to the queue so runQueue() picks them up on its next
+    // iteration. Only skip the heartbeat/checkForNewQuests part.
+    const wasRunning = running;
+    if (!wasRunning) {
+        await sendHeartbeat();
+        checkForNewQuests();
+    }
     const accepted = getAcceptedQuests().sort((a, b) => {
         const getPct = (q: any) => {
             const tasks = q?.config?.taskConfigV2?.tasks ?? {};
@@ -1693,25 +1702,38 @@ async function processQuests(): Promise<void> {
 
     const skippedIds = getSkippedQuests();
 
+    console.log(`[Adventurer] processQuests: ${accepted.length} accepted quests, enableGameTracking=${settings.store.enableGameTracking}, mode=${settings.store.gameTrackingMode}, seen=${seen.size}, skipped=${skippedIds.length}`);
+
+
     for (const quest of accepted) {
-        const appId = quest?.config?.application?.id;
+        // Try multiple locations for the application ID
+        const appId = quest?.config?.application?.id
+            ?? quest?.config?.taskConfigV2?.tasks?.["PLAY_ON_DESKTOP"]?.applications?.[0]?.id
+            ?? quest?.config?.taskConfigV2?.tasks?.["WATCH_VIDEO"]?.applications?.[0]?.id
+            ?? quest?.application_id
+            ?? quest?.config?.id;
         const questName = quest?.config?.messages?.questName ?? quest?.id;
 
-        if (!appId) continue;
-        if (isQuestComplete(quest)) continue;
-        if (seen.has(quest.id)) continue;
-        if (skippedIds.includes(quest.id)) continue;
+        if (isQuestComplete(quest)) { console.log(`[Adventurer] SKIP ${questName}: already complete`); continue; }
+        if (seen.has(quest.id)) { console.log(`[Adventurer] SKIP ${questName}: already seen`); continue; }
+        if (skippedIds.includes(quest.id)) { console.log(`[Adventurer] SKIP ${questName}: user skipped`); continue; }
 
         const task = getQuestTask(quest);
-        if (!task) continue;
+        if (!task) { console.log(`[Adventurer] SKIP ${questName}: no task (no WATCH_VIDEO or PLAY_ON_DESKTOP)`); continue; }
 
-        if (task.isVideo === false && !settings.store.enableGameTracking) continue;
+        if (task.isVideo === false && !settings.store.enableGameTracking) { console.log(`[Adventurer] SKIP ${questName}: game tracking disabled`); continue; }
 
-        queue.push({ quest, appId, questName, task });
+        if (!appId) {
+            console.warn(`[Adventurer] QUEUED (no appId): ${questName} - server will attempt to resolve from quest payload`);
+        } else {
+            console.log(`[Adventurer] QUEUED: ${questName} (appId=${appId}, isVideo=${task.isVideo})`);
+        }
+        queue.push({ quest, appId: appId ?? quest?.id, questName, task });
         seen.add(quest.id);
     }
 
-    if (queue.length > 0) runQueue();
+    console.log(`[Adventurer] processQuests: ${queue.length} quests queued (wasRunning=${wasRunning})`);
+    if (queue.length > 0 && !wasRunning) runQueue();
 }
 
 async function fetchAndProcess() {
@@ -2060,11 +2082,21 @@ export default definePlugin({
         const [subtitleHovered, setSubtitleHovered] = React.useState(false);
         const [claimState, setClaimState] = React.useState<"idle" | "claiming" | "reverting">("idle");
 
+        const [interpolatedProgress, setInterpolatedProgress] = React.useState<number | null>(null);
+
+        // "idle"    — game not running, show raw value
+        // "waiting" — game running, waiting for first/next heartbeat to sync baseline
+        // "counting" — heartbeat received, ticking up every second
+        const [syncState, setSyncState] = React.useState<"idle" | "waiting" | "counting">("idle");
+
+        // Stores the synced baseline: the value and wall-clock time of the last heartbeat
+        const heartbeatRef = React.useRef<{ value: number; at: number } | null>(null);
+
+        // Flux subscriptions + bar update registration
         React.useEffect(() => {
             _barUpdate = forceUpdate;
 
             const handleSync = () => forceUpdate(Math.random());
-            FluxDispatcher.subscribe("QUESTS_SEND_HEARTBEAT_SUCCESS", handleSync);
             FluxDispatcher.subscribe("QUESTS_FETCH_CURRENT_QUESTS_SUCCESS", handleSync);
             FluxDispatcher.subscribe("QUEST_UPDATE", handleSync);
 
@@ -2072,7 +2104,6 @@ export default definePlugin({
 
             return () => {
                 if (_barUpdate === forceUpdate) _barUpdate = null;
-                FluxDispatcher.unsubscribe("QUESTS_SEND_HEARTBEAT_SUCCESS", handleSync);
                 FluxDispatcher.unsubscribe("QUESTS_FETCH_CURRENT_QUESTS_SUCCESS", handleSync);
                 FluxDispatcher.unsubscribe("QUEST_UPDATE", handleSync);
                 clearInterval(syncInterval);
@@ -2085,6 +2116,61 @@ export default definePlugin({
                 }
             };
         }, []);
+
+        // Heartbeat listener — on every QUESTS_SEND_HEARTBEAT_SUCCESS, read the
+        // fresh value from the store, stamp it with the current time, and switch
+        // to "counting" so the ticker starts from this known-good baseline.
+        React.useEffect(() => {
+            const onHeartbeat = () => {
+                if (!running) return;
+                const lq = getAllQuests().find(q => q.id === liveQuest?.id) ?? liveQuest;
+                const tk = getQuestTask(lq)?.key;
+                if (!tk) return;
+                const value = lq?.userStatus?.progress?.[tk]?.value ?? 0;
+                heartbeatRef.current = { value, at: Date.now() };
+                setSyncState("counting");
+            };
+
+            FluxDispatcher.subscribe("QUESTS_SEND_HEARTBEAT_SUCCESS", onHeartbeat);
+            return () => FluxDispatcher.unsubscribe("QUESTS_SEND_HEARTBEAT_SUCCESS", onHeartbeat);
+        }, [running, liveQuest?.id]);
+
+        // Reset sync state when the game stops or the active quest changes
+        React.useEffect(() => {
+            if (!running) {
+                heartbeatRef.current = null;
+                setSyncState("idle");
+                setInterpolatedProgress(null);
+            } else {
+                // New quest started — wait for first heartbeat before counting
+                heartbeatRef.current = null;
+                setSyncState("waiting");
+                setInterpolatedProgress(null);
+            }
+        }, [running, liveQuest?.id]);
+
+        // 1-second ticker — only active while "counting". After 55s from the
+        // last heartbeat, pauses back to "waiting" until the next one arrives.
+        React.useEffect(() => {
+            if (syncState !== "counting" || !running) return;
+
+            const tick = () => {
+                if (!heartbeatRef.current) return;
+                const { value, at } = heartbeatRef.current;
+                const elapsed = (Date.now() - at) / 1000;
+                const tgt = getQuestTask(liveQuest)?.target ?? 1;
+
+                setInterpolatedProgress(Math.min(value + elapsed, tgt));
+
+                // Pause ~5s before the next expected heartbeat so we don't
+                // overshoot — the next heartbeat event will resync and resume
+                if (elapsed >= 55) setSyncState("waiting");
+            };
+
+            tick();
+            const ticker = setInterval(tick, 1000);
+            return () => clearInterval(ticker);
+        }, [syncState, running, liveQuest?.id]);
 
         // Hook execution must ALWAYS finish before an early return
         if (settings.store.barHidden) return null;
@@ -2104,7 +2190,13 @@ export default definePlugin({
         const taskInfo = getQuestTask(liveQuest);
         const taskKey = taskInfo?.key;
 
-        const current = taskKey ? (liveQuest?.userStatus?.progress?.[taskKey]?.value ?? 0) : 0;
+        const rawProgress = taskKey ? (liveQuest?.userStatus?.progress?.[taskKey]?.value ?? 0) : 0;
+        // Only show interpolated progress while actively counting — show raw
+        // value while waiting for first/next heartbeat so we never display a
+        // stale or drifted estimate
+        const current = (syncState === "counting" && interpolatedProgress !== null)
+            ? interpolatedProgress
+            : rawProgress;
         const total = taskInfo?.target ?? 1;
 
         const claimable = isQuestClaimable(liveQuest);
@@ -2353,6 +2445,7 @@ export default definePlugin({
     },
 
     start() {
+        console.log("[Adventurer] Plugin start() called!");
         fetch(`${getServer()}/reset`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -2386,7 +2479,9 @@ export default definePlugin({
         startUIObserver();
         sendHeartbeat(true);
 
+        console.log("[Adventurer] Setting up heartbeat interval...");
         _heartbeatIntervalHandle = setInterval(async () => {
+            console.log("[Adventurer] Heartbeat tick");
             if (location.pathname.includes("/quest-home") && settings.store.barHidden) {
                 settings.store.barHidden = false;
                 try { findStoreLazy("QuestStore")?.emitChange?.(); } catch (e) {}
@@ -2395,7 +2490,11 @@ export default definePlugin({
 
             const wasOnline = _serverOnline;
             const isOnline = await sendHeartbeat(true);
-            if (!wasOnline && isOnline && !running && queue.length === 0) {
+
+            // Always try to process quests on each heartbeat tick.
+            // Previously this only ran on server reconnection, meaning new
+            // quests discovered between Discord events were silently dropped.
+            if (isOnline) {
                 processQuests();
             }
         }, 15000);

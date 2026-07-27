@@ -1,5 +1,6 @@
 import logging
 import re
+import socket
 import subprocess
 import sys
 import threading
@@ -13,6 +14,24 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 
 import server_state
+
+# ---------------------------------------------------------------------------
+# Path helpers: resolve bundled assets (PyInstaller) and user data directory
+# ---------------------------------------------------------------------------
+
+APPDATA_DIR = Path.home() / ".Adventurer"
+
+
+def get_asset_path(relative: str) -> Path:
+    """Resolve a path relative to the application assets (handles PyInstaller)."""
+    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+        return Path(sys._MEIPASS) / relative
+    return Path(os.path.dirname(os.path.abspath(__file__))) / relative
+
+
+def ensure_appdata_dir():
+    """Create the ~/.Adventurer directory if it doesn't exist."""
+    APPDATA_DIR.mkdir(parents=True, exist_ok=True)
 
 logging.basicConfig(level=logging.INFO, format="%(message)s", stream=sys.stdout)
 log = logging.getLogger(__name__)
@@ -31,9 +50,12 @@ app = Flask(__name__)
 
 @app.before_request
 def log_request_info():
-    if request.method == "OPTIONS" or request.path in ["/heartbeat", "/log", "/status", "/users"]:
+    if request.method == "OPTIONS":
         return
-    log.info(f"Received \033[96m{request.method} {request.path}\033[0m")
+    if server_state.should_log("server"):
+        server_state.log_event(f"{request.method} {request.path}")
+    if request.path not in ["/heartbeat", "/log", "/status", "/users"]:
+        log.info(f"Received \033[96m{request.method} {request.path}\033[0m")
 
 
 CORS(app, origins=[
@@ -42,8 +64,67 @@ CORS(app, origins=[
     "https://ptb.discord.com"
 ])
 
-BASE_DIR = Path("fake_games")
-STUB_EXE = Path("stub.exe" if sys.platform == "win32" else "stub")
+BASE_DIR = APPDATA_DIR / "fake_games"
+STUB_EXE = APPDATA_DIR / ("stub.exe" if sys.platform == "win32" else "stub")
+
+
+def _install_stub_if_needed():
+    """Install stub.exe to ~/.Adventurer on startup if it's missing.
+
+    Frozen build: copies from the bundled _MEIPASS data.
+    Dev mode: attempts to build it via build_stub.py.
+    """
+    if STUB_EXE.exists():
+        log.info(f"Stub already installed at {STUB_EXE}")
+        return
+
+    stub_name = "stub.exe" if sys.platform == "win32" else "stub"
+
+    if getattr(sys, "frozen", False):
+        bundled = get_asset_path(stub_name)
+        log.info(f"Frozen build - looking for bundled stub at {bundled}")
+        if bundled.exists():
+            shutil.copy2(str(bundled), str(STUB_EXE))
+            log.info(f"Installed bundled stub to {STUB_EXE}")
+            server_state.log_event(f"Installed stub from bundle")
+        else:
+            log.error(f"Bundled stub NOT found at {bundled} - add {stub_name} to your .spec datas!")
+            server_state.log_event(f"Error: Bundled stub missing - add {stub_name} to .spec datas")
+    else:
+        build_script = get_asset_path("build_stub.py")
+        log.info(f"Dev mode - stub missing, build script at {build_script} (exists: {build_script.exists()})")
+        if build_script.exists():
+            log.info("Auto-building stub...")
+            server_state.log_event("Building stub executable...")
+            try:
+                result = subprocess.run(
+                    [sys.executable, str(build_script)],
+                    check=True, timeout=120,
+                    capture_output=True, text=True,
+                )
+                if result.stdout:
+                    log.info(f"Build output: {result.stdout.strip()}")
+                if result.stderr:
+                    log.info(f"Build stderr: {result.stderr.strip()}")
+                if STUB_EXE.exists():
+                    log.info(f"Stub built successfully at {STUB_EXE}")
+                else:
+                    log.error("Build script ran but stub.exe was not created")
+            except Exception as e:
+                log.error(f"Stub auto-build failed: {e}")
+                server_state.log_event(f"Error: Stub build failed: {e}")
+        else:
+            log.warning(f"No build_stub.py found at {build_script}")
+
+
+# Ensure ~/.Adventurer exists on startup
+ensure_appdata_dir()
+_install_stub_if_needed()
+log.info(f"App data directory: {APPDATA_DIR}")
+log.info(f"Stub executable path: {STUB_EXE} (exists: {STUB_EXE.exists()})")
+log.info(f"Fake games directory: {BASE_DIR}")
+server_state.log_event(f"Data dir: {APPDATA_DIR}")
+server_state.log_event(f"Stub: {STUB_EXE} ({'found' if STUB_EXE.exists() else 'NOT found'})")
 DETECTABLE_URL = "https://discord.com/api/v10/applications/detectable"
 
 _detectable_cache: list | None = None
@@ -77,15 +158,20 @@ def find_app(app_id: str) -> dict | None:
 
 def ensure_executable(app_data: dict, user_id: str | None = None, force_exe: str | None = None) -> Path | None:
     name = sanitize(app_data["name"])
+    log.info(f"ensure_executable: app={name!r}, force_exe={force_exe!r}")
 
     if force_exe:
         exe_name = force_exe
     else:
+        executables = app_data.get("executables", [])
+        log.info(f"ensure_executable: available executables = {executables}")
         exe_info = next(
-            (e for e in app_data.get("executables", []) if e.get("os") == "win32"),
+            (e for e in executables if e.get("os") == "win32"),
             None
         )
         if not exe_info:
+            log.warning(f"ensure_executable: no win32 executable found for {name}")
+            server_state.log_event(f"No win32 executable found for {name}", user_id)
             return None
         exe_name = exe_info["name"]
 
@@ -101,28 +187,79 @@ def ensure_executable(app_data: dict, user_id: str | None = None, force_exe: str
         exe_name += ".exe"
 
     exe_path = BASE_DIR / name / exe_name
+    log.info(f"ensure_executable: target exe path = {exe_path}")
     exe_path.parent.mkdir(parents=True, exist_ok=True)
 
     if not exe_path.exists():
+        log.info(f"ensure_executable: exe does not exist yet, checking stub at {STUB_EXE}")
         if not STUB_EXE.exists():
-            msg = "stub executable not found - place it next to server.py"
-            log.error(msg)
-            server_state.log_event(f"Error: {msg}", user_id)
-            raise FileNotFoundError(msg)
+            if getattr(sys, "frozen", False):
+                # In a frozen build, the stub must be pre-bundled in _MEIPASS.
+                # Look for it there and copy it to the user data directory.
+                bundled_stub = get_asset_path("stub.exe" if sys.platform == "win32" else "stub")
+                log.info(f"ensure_executable: frozen build - looking for bundled stub at {bundled_stub} (exists: {bundled_stub.exists()})")
+                server_state.log_event(f"Looking for bundled stub at: {bundled_stub}", user_id)
+                if bundled_stub.exists():
+                    shutil.copy2(str(bundled_stub), str(STUB_EXE))
+                    log.info(f"Copied bundled stub to {STUB_EXE}")
+                    server_state.log_event("Installed bundled stub executable", user_id)
+                else:
+                    msg = f"Bundled stub not found at {bundled_stub}. Add stub.exe to your .spec data files."
+                    log.error(msg)
+                    server_state.log_event(f"Error: {msg}", user_id)
+                    raise FileNotFoundError(msg)
+            else:
+                # Dev mode: attempt to auto-build the stub using build_stub.py
+                build_stub = get_asset_path("build_stub.py")
+                log.info(f"ensure_executable: dev mode - stub missing, build_stub = {build_stub} (exists: {build_stub.exists()})")
+                if build_stub.exists():
+                    log.info("Stub not found - attempting to build it automatically...")
+                    server_state.log_event("Building stub executable...", user_id)
+                    try:
+                        result = subprocess.run(
+                            [sys.executable, str(build_stub)],
+                            check=True, timeout=120,
+                            capture_output=True, text=True,
+                        )
+                        log.info(f"Stub build stdout: {result.stdout}")
+                        if result.stderr:
+                            log.info(f"Stub build stderr: {result.stderr}")
+                    except Exception as build_err:
+                        log.error(f"Auto-build of stub failed: {build_err}")
+                        server_state.log_event(f"Error: Stub auto-build failed: {build_err}", user_id)
+
+                if not STUB_EXE.exists():
+                    msg = f"stub executable not found at {STUB_EXE}"
+                    log.error(msg)
+                    server_state.log_event(f"Error: {msg}", user_id)
+                    raise FileNotFoundError(msg)
+
         log.info(f"Copying stub executable to {exe_path}")
-        if server_state.should_log("stubs"):
-            server_state.log_event(f"Created new stub for {name}", user_id)
+        server_state.log_event(f"Created new stub for {name}", user_id)
         try:
             os.link(STUB_EXE, exe_path)
+            log.info(f"ensure_executable: hard-linked stub to {exe_path}")
         except OSError:
             shutil.copy2(STUB_EXE, exe_path)
+            log.info(f"ensure_executable: copied stub to {exe_path}")
+    else:
+        log.info(f"ensure_executable: exe already exists at {exe_path}")
 
     return exe_path
 
 
 def launch_exe(path: Path) -> subprocess.Popen:
     log.info(f"Launching {path}")
-    return subprocess.Popen([str(path)], cwd=path.parent)
+    server_state.log_event(f"Launching: {path}")
+    try:
+        proc = subprocess.Popen([str(path)], cwd=path.parent)
+        log.info(f"Launched process pid={proc.pid}")
+        server_state.log_event(f"Process started (pid {proc.pid})")
+        return proc
+    except Exception as e:
+        log.error(f"Failed to launch {path}: {e}")
+        server_state.log_event(f"Error: Failed to launch {path}: {e}")
+        raise
 
 
 def _kill_all_running():
@@ -147,6 +284,19 @@ def _kill_all_running():
             log.info(f"Killed process for app {app_id} (pid {proc.pid})")
 
     _running.clear()
+
+
+def _run_server_thread(port: int = 5000):
+    """Wrapper for the server thread that catches and logs fatal errors."""
+    try:
+        run_server(port)
+    except Exception as e:
+        msg = f"Server thread crashed: {e}"
+        log.error(msg)
+        try:
+            server_state.log_event(f"Error: {msg}")
+        except Exception:
+            pass
 
 
 def cleanup_stubs():
@@ -206,11 +356,21 @@ def cleanup_stubs():
 
 @app.route("/run", methods=["POST"])
 def run():
+    log.info("[/run] DEBUG TEST")
     body = request.get_json(silent=True) or {}
     app_id = body.get("id")
     quest_obj = body.get("quest")
     user_id = body.get("userId")
     force_exe = body.get("forceExe")
+
+    quest_name = ""
+    if quest_obj and isinstance(quest_obj, dict):
+        cfg = quest_obj.get("config") or {}
+        msgs = cfg.get("messages") or {}
+        quest_name = msgs.get("questName") or msgs.get("gameTitle") or ""
+
+    log.info(f"[/run] app_id={app_id}, user_id={user_id}, force_exe={force_exe}, quest={quest_name!r}")
+    server_state.log_event(f"Run request: app={app_id}, quest={quest_name or 'none'}", user_id)
 
     if not app_id:
         msg = "Missing id in /run request"
@@ -220,7 +380,20 @@ def run():
 
     app_data = find_app(str(app_id))
     if not app_data:
-        app_name = quest_obj.get("config", {}).get("application", {}).get("name") if quest_obj else None
+        # Try multiple locations for the app name (Discord removed config.application)
+        cfg = quest_obj.get("config", {}) if quest_obj else {}
+        app_name = (cfg.get("application", {}) or {}).get("name")
+        if not app_name:
+            # New Discord format: app info lives inside taskConfigV2
+            tasks = (cfg.get("taskConfigV2", {}) or {}).get("tasks", {})
+            for task_key in ["PLAY_ON_DESKTOP", "WATCH_VIDEO"]:
+                task_apps = (tasks.get(task_key, {}) or {}).get("applications", [])
+                if task_apps and isinstance(task_apps, list) and len(task_apps) > 0:
+                    app_name = task_apps[0].get("name")
+                    if app_name:
+                        break
+        if not app_name:
+            app_name = (cfg.get("messages", {}) or {}).get("gameTitle")
         if app_name:
             app_data = {"id": str(app_id), "name": app_name, "executables": []}
             msg = f"App ID {app_id} not in public detectable list, using quest payload name '{app_name}'"
@@ -232,7 +405,7 @@ def run():
             server_state.log_event(f"Error: {msg}", user_id)
             return jsonify({"error": "app not found"}), 404
 
-    log.info(f"Discord executables: {app_data.get("executables", [])}")
+    log.info(f"Discord executables: {app_data.get('executables', [])}" )
 
     try:
         exe_path = ensure_executable(app_data, user_id, force_exe)
@@ -251,6 +424,9 @@ def run():
         if not fallback_exe.lower().endswith(".exe"):
             fallback_exe += ".exe"
 
+        msg = f"No suitable executable for {name} (requires_confirmation)"
+        log.warning(msg)
+        server_state.log_event(msg, user_id)
         return jsonify({
             "error": "no suitable executable",
             "requires_confirmation": True,
@@ -259,7 +435,14 @@ def run():
 
     _kill_all_running()
 
-    proc = launch_exe(exe_path.absolute())
+    try:
+        proc = launch_exe(exe_path.absolute())
+    except Exception as e:
+        msg = f"Failed to launch executable: {e}"
+        log.error(msg)
+        server_state.log_event(f"Error: {msg}", user_id)
+        return jsonify({"error": msg}), 500
+
     _running[app_id] = proc
 
     quest_id = quest_obj.get("id") if quest_obj else None
@@ -377,20 +560,65 @@ def _watchdog_loop():
     interval = 15.0
     while True:
         time.sleep(interval)
-        server_state.tick_heartbeat_watchdog()
-        cleanup_stubs()
+        try:
+            server_state.tick_heartbeat_watchdog()
+            cleanup_stubs()
+        except Exception as e:
+            log.error(f"Watchdog error: {e}")
+            server_state.log_event(f"Error: Watchdog crashed: {e}")
+
+
+def _is_port_free(port: int) -> bool:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        try:
+            s.bind(("", port))
+            return True
+        except OSError:
+            return False
+
+
+def _find_free_port(start: int = 5000, end: int = 5050) -> int | None:
+    for port in range(start, end + 1):
+        if _is_port_free(port):
+            return port
+    return None
 
 
 def run_server(port: int = 5000):
     watchdog = threading.Thread(target=_watchdog_loop, daemon=True)
     watchdog.start()
-    app.run(port=port, debug=False, use_reloader=False)
+
+    actual_port = port
+    if not _is_port_free(port):
+        free = _find_free_port(port + 1)
+        if free is not None:
+            log.warning(f"Port {port} is in use, falling back to port {free}")
+            server_state.log_event(f"Port {port} in use - using port {free} instead")
+            actual_port = free
+        else:
+            msg = f"Port {port} is in use and no free port found in range {port}-{port + 50}"
+            log.error(msg)
+            server_state.log_event(f"Error: {msg}")
+            return
+
+    log.info(f"Starting server on port {actual_port}...")
+    server_state.log_event(f"Server started on port {actual_port}")
+    try:
+        app.run(port=actual_port, debug=False, use_reloader=False)
+    except OSError as e:
+        msg = f"Server failed to start on port {actual_port}: {e}"
+        log.error(msg)
+        server_state.log_event(f"Error: {msg}")
+    except Exception as e:
+        msg = f"Server error: {e}"
+        log.error(msg)
+        server_state.log_event(f"Error: {msg}")
 
 
 if __name__ == "__main__":
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 5000
 
-    t = threading.Thread(target=run_server, args=(port,), daemon=True)
+    t = threading.Thread(target=_run_server_thread, args=(port,), daemon=True)
     t.start()
 
     from gui import run_gui

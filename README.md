@@ -58,3 +58,4 @@ I will hopefully have a build in release soon, but for now:
 - Better log output management
 - Quest claim fanfare
 - Experiences volume control
+- Better quest page direct

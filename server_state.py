@@ -22,7 +22,8 @@ _log_settings = {
     "progress": False,
     "completion": True,
     "accounts": True,
-    "stubs": True
+    "stubs": True,
+    "server": False
 }
 
 _stub_cleanup_mode: str = "days"
