@@ -1272,16 +1272,18 @@ class MainWindow(QMainWindow):
         for q in quests:
             if not q or not isinstance(q, dict):
                 continue
+            if not is_game_quest(q):
+                continue
             if is_enrolled(q):
+                continue
+            if is_complete(q):
                 continue
             if is_expired(q):
                 continue
             orbs = quest_orbs(q)
-            if self._prefs["orbs_only"] and orbs == 0:
+            if self._prefs.get("orbs_only") and orbs == 0:
                 continue
-            if orbs < self._prefs["min_orbs"]:
-                continue
-            if is_video_quest(q) and not self._prefs["notify_video"]:
+            if orbs < self._prefs.get("min_orbs", 0):
                 continue
             result.append(q)
         return result
@@ -1321,7 +1323,7 @@ class MainWindow(QMainWindow):
 
         if available_quests:
             for q in available_quests:
-                kind = "Video quest" if is_video_quest(q) else "Not enrolled"
+                kind = "Not accepted"
                 self._available_page.add_card(QuestCard(q, tag=kind, tag_color=TEXT_MUTED.name()))
         else:
             self._available_page.add_empty("No available quests")
@@ -1329,8 +1331,9 @@ class MainWindow(QMainWindow):
         history_quests = [
             q for q in quests
             if q and isinstance(q, dict)
-               and is_enrolled(q) and (is_complete(q) or is_claimed(q))
-               and not is_expired(q)
+               and is_game_quest(q)
+               and is_enrolled(q)
+               and (is_complete(q) or is_claimed(q) or is_expired(q))
         ]
         self.tabs.setTabText(2, f"History ({len(history_quests)})" if history_quests else "History")
 
@@ -1338,11 +1341,15 @@ class MainWindow(QMainWindow):
             for q in history_quests:
                 if is_claimed(q):
                     tag, color = "✓ Claimed", ACCENT_GREEN.name()
-                else:
+                elif is_complete(q):
                     tag, color = "✓ Complete - unclaimed", ACCENT_GOLD.name()
+                elif is_expired(q):
+                    tag, color = "Expired", TEXT_MUTED.name()
+                else:
+                    tag, color = "✓ Complete", ACCENT_GREEN.name()
                 self._history_page.add_card(QuestCard(q, tag=tag, tag_color=color))
         else:
-            self._history_page.add_empty("No completed quests yet")
+            self._history_page.add_empty("No history quests yet")
 
     def _notify_with_icon(self, title: str, message: str, quest: dict):
         if not quest or not isinstance(quest, dict):

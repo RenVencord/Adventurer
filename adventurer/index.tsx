@@ -6,6 +6,12 @@ import { Toasts, Button } from "@webpack/common";
 import { showNotification } from "@api/Notifications";
 
 const QuestStore = findStoreLazy("QuestStore");
+const RunningGameStore = findStoreLazy("RunningGameStore");
+
+function isAppRunning(appId: string): boolean {
+    const games = RunningGameStore?.getRunningGames?.() ?? [];
+    return games.some((g: any) => String(g?.id) === String(appId));
+}
 
 // Native (Electron main process) bridge — see native.ts. Only available on
 // desktop builds (official Discord desktop app *or* Vesktop), since it relies
@@ -583,14 +589,15 @@ async function reportActiveStatus(questId: string | null, quest: any | null, sta
 }
 
 async function sendHeartbeat(force = false) {
-    const all = getAllQuests().filter(q => q?.userStatus !== null && !isQuestExpired(q));
+    const all = getAllQuests().filter(q => q?.id);
 
     const fingerprint = all.map(q => {
         const progress = q?.userStatus?.progress ?? {};
         const progressStr = Object.entries(progress)
             .map(([k, v]: [string, any]) => `${k}:${v?.value ?? 0}`)
             .join("|");
-        return `${q.id}@${progressStr}`;
+        const enrolled = q?.userStatus !== null && q?.userStatus !== undefined;
+        return `${q.id}@${enrolled}@${progressStr}`;
     }).sort().join(",");
 
     if (!force && fingerprint === _lastHeartbeatQuestIds) {
@@ -612,9 +619,13 @@ async function sendHeartbeat(force = false) {
         });
 
         if (res.ok) {
+            const reconnected = !_serverOnline;
             _serverOnline = true;
             _heartbeatFailureCount = 0;
             updateBar({ error: null });
+            if (reconnected) {
+                seen.clear();
+            }
             return true;
         } else {
             _serverOnline = false;
@@ -1355,6 +1366,9 @@ async function handleForceKill() {
     await stopGame();
     running = false;
     queue.length = 0;
+    for (const q of getAcceptedQuests()) {
+        if (q?.id) seen.add(q.id);
+    }
     updateBar({ activeQuestName: null, forceKillVisible: false });
     Toasts.show({
         message: "Force killed active quest processes.",
@@ -1405,14 +1419,46 @@ async function launchGame(appId: string, quest: any, forceExe?: string): Promise
     }
 }
 
-async function waitForCompletion(quest: any, taskKey: string, target: number, questName: string): Promise<boolean> {
+async function waitForCompletion(quest: any, taskKey: string, target: number, questName: string, appId?: string, isVideo = false): Promise<boolean> {
+    let gameWasDetected = (!isVideo && appId) ? isAppRunning(appId) : false;
+    let gameClosed = false;
+
+    const onGamesChange = (e: any) => {
+        if (isVideo || !appId) return;
+        const removed = e?.removed ?? [];
+        if (removed.some((g: any) => String(g?.id) === String(appId))) {
+            if (gameWasDetected) gameClosed = true;
+        }
+        if (isAppRunning(appId)) {
+            gameWasDetected = true;
+        } else if (gameWasDetected) {
+            gameClosed = true;
+        }
+    };
+
+    if (!isVideo && appId) {
+        FluxDispatcher.subscribe("RUNNING_GAMES_CHANGE", onGamesChange);
+    }
+
+    const cleanup = () => {
+        if (!isVideo && appId) {
+            FluxDispatcher.unsubscribe("RUNNING_GAMES_CHANGE", onGamesChange);
+        }
+    };
+
     if (settings.store.gameTrackingMode === "debug") {
-        await new Promise<void>(resolve => {
+        const completed = await new Promise<boolean>(resolve => {
             const onHeartbeat = (_event: any) => {
+                if (gameClosed) {
+                    FluxDispatcher.unsubscribe("QUESTS_SEND_HEARTBEAT_SUCCESS", onHeartbeat);
+                    resolve(false);
+                    return;
+                }
+
                 const updated = getAllQuests().find(q => q.id === quest.id);
                 if (!updated) {
                     FluxDispatcher.unsubscribe("QUESTS_SEND_HEARTBEAT_SUCCESS", onHeartbeat);
-                    resolve();
+                    resolve(false);
                     return;
                 }
 
@@ -1423,11 +1469,36 @@ async function waitForCompletion(quest: any, taskKey: string, target: number, qu
 
                 if (progress >= target || isCompleted) {
                     FluxDispatcher.unsubscribe("QUESTS_SEND_HEARTBEAT_SUCCESS", onHeartbeat);
-                    resolve();
+                    resolve(true);
                 }
             };
+
+            const onGamesChangeCheck = () => {
+                if (gameClosed) {
+                    FluxDispatcher.unsubscribe("QUESTS_SEND_HEARTBEAT_SUCCESS", onHeartbeat);
+                    FluxDispatcher.unsubscribe("RUNNING_GAMES_CHANGE", onGamesChangeCheck);
+                    resolve(false);
+                }
+            };
+
             FluxDispatcher.subscribe("QUESTS_SEND_HEARTBEAT_SUCCESS", onHeartbeat);
+            if (!isVideo && appId) {
+                FluxDispatcher.subscribe("RUNNING_GAMES_CHANGE", onGamesChangeCheck);
+            }
         });
+
+        cleanup();
+
+        if (!completed || gameClosed) {
+            Toasts.show({
+                message: `Game closed — stopped "${questName}"`,
+                type: Toasts.Type.FAILURE,
+                id: Toasts.genId(),
+                options: { duration: 4000 }
+            });
+            await stopGame();
+            return false;
+        }
 
         const forceKillTimer = setTimeout(() => {
             updateBar({ forceKillVisible: true });
@@ -1458,12 +1529,28 @@ async function waitForCompletion(quest: any, taskKey: string, target: number, qu
     }
 
     while (true) {
-        await sleep(15000);
+        await sleep(5000);
 
-        if (!running) return false;
+        if (!running) {
+            cleanup();
+            return false;
+        }
+
+        if (gameClosed) {
+            cleanup();
+            Toasts.show({
+                message: `Game closed — stopped "${questName}"`,
+                type: Toasts.Type.FAILURE,
+                id: Toasts.genId(),
+                options: { duration: 4000 }
+            });
+            await stopGame(questName);
+            return false;
+        }
 
         const updated = getAllQuests().find(q => q.id === quest.id);
         if (!updated) {
+            cleanup();
             await stopGame(questName);
             return false;
         }
@@ -1476,6 +1563,7 @@ async function waitForCompletion(quest: any, taskKey: string, target: number, qu
         const isOnline = await sendHeartbeat();
 
         if (progress >= target || isCompleted) {
+            cleanup();
             const forceKillTimer = setTimeout(() => {
                 updateBar({ forceKillVisible: true });
             }, 5000);
@@ -1496,6 +1584,7 @@ async function waitForCompletion(quest: any, taskKey: string, target: number, qu
         }
 
         if (!isOnline && _heartbeatFailureCount >= 2) {
+            cleanup();
             return false;
         }
     }
@@ -1526,8 +1615,11 @@ async function runQueue() {
                     id: Toasts.genId(),
                     options: { duration: 5000 }
                 });
-                seen.delete(quest.id);
-                continue;
+                queue.length = 0;
+                for (const q of getAcceptedQuests()) {
+                    if (q?.id) seen.add(q.id);
+                }
+                break;
             }
 
             Toasts.show({
@@ -1537,9 +1629,12 @@ async function runQueue() {
                 options: { duration: 4000 }
             });
 
-            const completed = await waitForCompletion(quest, task.key, task.target, questName);
+            const completed = await waitForCompletion(quest, task.key, task.target, questName, appId, task.isVideo);
             if (!completed) {
-                seen.delete(quest.id);
+                queue.length = 0;
+                for (const q of getAcceptedQuests()) {
+                    if (q?.id) seen.add(q.id);
+                }
                 break;
             }
 
@@ -1547,12 +1642,15 @@ async function runQueue() {
             if (!settings.store.enableGameTracking) { console.log(`[Adventurer] runQueue: game tracking disabled, skipping ${questName}`); continue; }
 
             console.log(`[Adventurer] runQueue: calling launchGame for ${questName} (appId=${appId})`);
-            await stopGame();
-
             const ok = await launchGame(appId, quest);
             console.log(`[Adventurer] runQueue: launchGame returned ${ok} for ${questName}`);
             if (!ok) {
-                seen.delete(quest.id);
+                queue.length = 0;
+                if (_serverOnline) {
+                    for (const q of getAcceptedQuests()) {
+                        if (q?.id) seen.add(q.id);
+                    }
+                }
                 break;
             }
 
@@ -1563,9 +1661,12 @@ async function runQueue() {
                 options: { duration: 3000 }
             });
 
-            const completed = await waitForCompletion(quest, task.key, task.target, questName);
+            const completed = await waitForCompletion(quest, task.key, task.target, questName, appId, task.isVideo);
             if (!completed) {
-                seen.delete(quest.id);
+                queue.length = 0;
+                for (const q of getAcceptedQuests()) {
+                    if (q?.id) seen.add(q.id);
+                }
                 break;
             }
         }
@@ -2161,8 +2262,7 @@ export default definePlugin({
             }
         }, [running, _activeQuestId]);
 
-        // 1-second ticker — only active while "counting". After 55s from the
-        // last heartbeat, pauses back to "waiting" until the next one arrives.
+        // 1-second ticker — only active while "counting". Caps progression at 58s and waits 75s for heartbeat resync.
         React.useEffect(() => {
             if (syncState !== "counting" || !running) return;
 
@@ -2173,11 +2273,10 @@ export default definePlugin({
                 const lq = getAllQuests().find(q => q.id === _activeQuestId);
                 const tgt = lq ? (getQuestTask(lq)?.target ?? 1) : 1;
 
-                setInterpolatedProgress(Math.min(value + elapsed, tgt));
+                const displayElapsed = Math.min(elapsed, 58);
+                setInterpolatedProgress(Math.min(value + displayElapsed, tgt));
 
-                // Pause ~5s before the next expected heartbeat so we don't
-                // overshoot — the next heartbeat event will resync and resume
-                if (elapsed >= 55) setSyncState("waiting");
+                if (elapsed >= 75) setSyncState("waiting");
             };
 
             tick();
