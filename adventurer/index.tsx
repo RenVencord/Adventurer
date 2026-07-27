@@ -2092,6 +2092,17 @@ export default definePlugin({
         // Stores the synced baseline: the value and wall-clock time of the last heartbeat
         const heartbeatRef = React.useRef<{ value: number; at: number } | null>(null);
 
+        // Compute the active quest ID here — before any effects — so we can
+        // safely use it in dep arrays without hitting a temporal dead zone.
+        const _activeQuestId: string | null = (() => {
+            if (_barState.activeQuestName) {
+                return getAllQuests().find(q =>
+                    (q?.config?.messages?.questName ?? q?.id) === _barState.activeQuestName
+                )?.id ?? null;
+            }
+            return getAllQuests().find(q => isQuestClaimable(q))?.id ?? null;
+        })();
+
         // Flux subscriptions + bar update registration
         React.useEffect(() => {
             _barUpdate = forceUpdate;
@@ -2123,7 +2134,8 @@ export default definePlugin({
         React.useEffect(() => {
             const onHeartbeat = () => {
                 if (!running) return;
-                const lq = getAllQuests().find(q => q.id === liveQuest?.id) ?? liveQuest;
+                const lq = getAllQuests().find(q => q.id === _activeQuestId);
+                if (!lq) return;
                 const tk = getQuestTask(lq)?.key;
                 if (!tk) return;
                 const value = lq?.userStatus?.progress?.[tk]?.value ?? 0;
@@ -2133,7 +2145,7 @@ export default definePlugin({
 
             FluxDispatcher.subscribe("QUESTS_SEND_HEARTBEAT_SUCCESS", onHeartbeat);
             return () => FluxDispatcher.unsubscribe("QUESTS_SEND_HEARTBEAT_SUCCESS", onHeartbeat);
-        }, [running, liveQuest?.id]);
+        }, [running, _activeQuestId]);
 
         // Reset sync state when the game stops or the active quest changes
         React.useEffect(() => {
@@ -2147,7 +2159,7 @@ export default definePlugin({
                 setSyncState("waiting");
                 setInterpolatedProgress(null);
             }
-        }, [running, liveQuest?.id]);
+        }, [running, _activeQuestId]);
 
         // 1-second ticker — only active while "counting". After 55s from the
         // last heartbeat, pauses back to "waiting" until the next one arrives.
@@ -2158,7 +2170,8 @@ export default definePlugin({
                 if (!heartbeatRef.current) return;
                 const { value, at } = heartbeatRef.current;
                 const elapsed = (Date.now() - at) / 1000;
-                const tgt = getQuestTask(liveQuest)?.target ?? 1;
+                const lq = getAllQuests().find(q => q.id === _activeQuestId);
+                const tgt = lq ? (getQuestTask(lq)?.target ?? 1) : 1;
 
                 setInterpolatedProgress(Math.min(value + elapsed, tgt));
 
@@ -2170,7 +2183,7 @@ export default definePlugin({
             tick();
             const ticker = setInterval(tick, 1000);
             return () => clearInterval(ticker);
-        }, [syncState, running, liveQuest?.id]);
+        }, [syncState, running, _activeQuestId]);
 
         // Hook execution must ALWAYS finish before an early return
         if (settings.store.barHidden) return null;

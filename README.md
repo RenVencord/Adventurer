@@ -59,3 +59,4 @@ I will hopefully have a build in release soon, but for now:
 - Quest claim fanfare
 - Experiences volume control
 - Better quest page direct
+- Plugin installer and auto updater
