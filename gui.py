@@ -10,7 +10,8 @@ from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QScrollArea, QFrame, QSystemTrayIcon, QMenu, QSizePolicy,
     QDialog, QCheckBox, QSpinBox, QFormLayout, QDialogButtonBox,
-    QTabWidget, QPlainTextEdit, QToolButton, QComboBox
+    QTabWidget, QPlainTextEdit, QToolButton, QComboBox, QLineEdit,
+    QPushButton, QFileDialog, QWidgetAction
 )
 from PyQt6.QtCore import Qt, QTimer, QThread, pyqtSignal, QSize, QRect, QByteArray, QBuffer, QIODevice
 from PyQt6.QtGui import (
@@ -49,9 +50,26 @@ RING_BG = QColor("#1e1f22")
 CDN_BASE = "https://cdn.discordapp.com"
 
 QUEST_ICON_SVG_PATH = _get_asset_path(os.path.join("assets", "quest_icon.svg"))
+BROWSE_ICON_SVG_PATH = _get_asset_path(os.path.join("assets", "browse_icon.svg"))
 
 PREFS_FILE = os.path.join(APPDATA_DIR, "adventurer_settings.json")
 ORB_ICON_BASE64 = ""
+
+
+def _load_svg_icon(path: str, size: int = 18) -> QIcon:
+    if os.path.exists(path):
+        try:
+            renderer = QSvgRenderer(path)
+            pm = QPixmap(size, size)
+            pm.fill(Qt.GlobalColor.transparent)
+            p = QPainter(pm)
+            renderer.render(p)
+            p.end()
+            if not pm.isNull():
+                return QIcon(pm)
+        except Exception:
+            pass
+    return QIcon()
 
 
 def load_prefs() -> dict:
@@ -71,7 +89,8 @@ def load_prefs() -> dict:
         "log_accounts": True,
         "log_stubs": True,
         "stub_cleanup_mode": "days",
-        "stub_cleanup_days": 7
+        "stub_cleanup_days": 7,
+        "fake_games_dir": APPDATA_DIR
     }
 
 
@@ -573,13 +592,34 @@ class LogPage(QWidget):
 
         self._cursor = 0
 
+    def _get_entry_color(self, msg: str) -> str:
+        msg_lower = msg.lower()
+        if any(k in msg_lower for k in ["account", "heartbeat", "connect", "drop"]):
+            return "#5865f2"
+        if any(k in msg_lower for k in ["quest", "complete", "progress"]):
+            return "#62c465"
+        if any(k in msg_lower for k in ["stub", "server", "run request", "http", "get ", "post "]):
+            return "#d64776"
+        return "#949ba4"
+
     def append_entries(self, entries: list[dict]):
         if not entries:
             return
         sb = self._text.verticalScrollBar()
         at_bottom = sb.value() >= sb.maximum() - 4
+        import html
+        import re
         for e in entries:
-            self._text.appendPlainText(f"[{e['ts']}] {e['msg']}")
+            ts = html.escape(str(e.get("ts", "")))
+            msg = html.escape(str(e.get("msg", "")))
+            color = self._get_entry_color(e.get("msg", ""))
+            msg_html = re.sub(
+                r'^(\[\s*[^\]]+\s*\])',
+                r"<span style='color: #ffffff;'>\1</span>",
+                msg
+            )
+            line = f"<span style='color: #6a6f77;'>[{ts}]</span> <span style='color: {color};'>{msg_html}</span>"
+            self._text.appendHtml(line)
         if at_bottom:
             self._text.moveCursor(self._text.textCursor().MoveOperation.End)
 
@@ -720,7 +760,22 @@ class SettingsDialog(QDialog):
         self.setStyleSheet(f"""
             QDialog {{ background: {BG_DARK.name()}; color: {TEXT_PRIMARY.name()}; }}
             QLabel {{ color: {TEXT_PRIMARY.name()}; }}
-            QCheckBox {{ color: {TEXT_PRIMARY.name()}; }}
+            QCheckBox {{ color: {TEXT_PRIMARY.name()}; spacing: 8px; }}
+            QCheckBox::indicator {{
+                width: 14px;
+                height: 14px;
+                border: 1.5px solid {BORDER.name()};
+                border-radius: 3px;
+                background: {BG_CARD.name()};
+            }}
+            QCheckBox::indicator:unchecked:hover {{
+                border: 1.5px solid {ACCENT_BLUE.name()};
+            }}
+            QCheckBox::indicator:checked {{
+                border: 1.5px solid {ACCENT_BLUE.name()};
+                background: {ACCENT_BLUE.name()};
+                image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='3.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='20 6 9 17 4 12'%3E%3C/polyline%3E%3C/svg%3E");
+            }}
             QSpinBox {{
                 background: {BG_CARD.name()};
                 color: {TEXT_PRIMARY.name()};
@@ -799,6 +854,38 @@ class SettingsDialog(QDialog):
         self.combo_cleanup.currentIndexChanged.connect(self._update_spin_state)
         self._update_spin_state()
 
+        div2 = QFrame()
+        div2.setFrameShape(QFrame.Shape.HLine)
+        div2.setStyleSheet(f"background: {BORDER.name()};")
+        form.addRow(div2)
+
+        dir_box = QHBoxLayout()
+        self.txt_fake_games_dir = QLineEdit()
+        self.txt_fake_games_dir.setText(prefs.get("fake_games_dir", APPDATA_DIR))
+        self.txt_fake_games_dir.setStyleSheet(f"""
+            QLineEdit {{
+                background: {BG_CARD.name()};
+                color: {TEXT_PRIMARY.name()};
+                border: 1px solid {BORDER.name()};
+                border-radius: 4px;
+                padding: 3px 6px;
+            }}
+        """)
+        btn_browse_dir = QPushButton()
+        browse_icon = _load_svg_icon(BROWSE_ICON_SVG_PATH, 16)
+        if not browse_icon.isNull():
+            btn_browse_dir.setIcon(browse_icon)
+            btn_browse_dir.setIconSize(QSize(16, 16))
+        else:
+            btn_browse_dir.setText("Browse...")
+        btn_browse_dir.setFixedWidth(36)
+        btn_browse_dir.setToolTip("Browse...")
+        btn_browse_dir.clicked.connect(self._browse_fake_games_dir)
+        dir_box.addWidget(self.txt_fake_games_dir)
+        dir_box.addWidget(btn_browse_dir)
+
+        form.addRow("Fake Games Dir:", dir_box)
+
         layout.addLayout(form)
 
         btns = QDialogButtonBox(
@@ -807,6 +894,12 @@ class SettingsDialog(QDialog):
         btns.accepted.connect(self.accept)
         btns.rejected.connect(self.reject)
         layout.addWidget(btns)
+
+    def _browse_fake_games_dir(self):
+        curr = self.txt_fake_games_dir.text().strip() or APPDATA_DIR
+        chosen = QFileDialog.getExistingDirectory(self, "Select Fake Games Directory", curr)
+        if chosen:
+            self.txt_fake_games_dir.setText(chosen)
 
     def _update_spin_state(self):
         self.spin_cleanup_days.setEnabled(self.combo_cleanup.currentData() == "days")
@@ -818,6 +911,7 @@ class SettingsDialog(QDialog):
         p["notify_video"] = self.chk_notify_video.isChecked()
         p["stub_cleanup_mode"] = self.combo_cleanup.currentData()
         p["stub_cleanup_days"] = self.spin_cleanup_days.value()
+        p["fake_games_dir"] = self.txt_fake_games_dir.text().strip() or APPDATA_DIR
         return p
 
 
@@ -893,6 +987,60 @@ class LoggingSettingsDialog(QDialog):
         return p
 
 
+class UserMenuItemWidget(QFrame):
+    clicked = pyqtSignal(str)
+
+    def __init__(self, uid: str, username: str, is_selected: bool, avatar_pm: QPixmap | None, parent=None):
+        super().__init__(parent)
+        self.uid = uid
+        self.is_selected = is_selected
+        self._hovered = False
+
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(6, 4, 12, 4)
+        layout.setSpacing(6)
+
+        self.avatar_lbl = QLabel()
+        self.avatar_lbl.setFixedSize(22, 22)
+        self.avatar_lbl.setStyleSheet("background: transparent;")
+        if avatar_pm and not avatar_pm.isNull():
+            self.avatar_lbl.setPixmap(avatar_pm.scaled(22, 22, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
+        layout.addWidget(self.avatar_lbl)
+
+        check_str = "✓ " if is_selected else "  "
+        self.text_lbl = QLabel(f"{check_str}{username}")
+        self.text_lbl.setStyleSheet("background: transparent; color: #f2f3f5; font-size: 12px; font-weight: 500;")
+        layout.addWidget(self.text_lbl)
+        layout.addStretch()
+
+        self._update_style()
+
+    def set_avatar(self, pm: QPixmap):
+        if pm and not pm.isNull():
+            self.avatar_lbl.setPixmap(pm.scaled(22, 22, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
+
+    def enterEvent(self, event):
+        self._hovered = True
+        self._update_style()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self._hovered = False
+        self._update_style()
+        super().leaveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.clicked.emit(self.uid)
+        super().mouseReleaseEvent(event)
+
+    def _update_style(self):
+        bg = ACCENT_BLUE.name() if self._hovered else "transparent"
+        self.setStyleSheet(f"QFrame {{ background: {bg}; border: none; border-radius: 0px; }} QLabel {{ background: transparent; }}")
+
+
 class UserAvatarButton(QToolButton):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -909,16 +1057,18 @@ class UserAvatarButton(QToolButton):
                 color: {TEXT_PRIMARY.name()};
                 border: 1px solid {BORDER.name()};
                 border-radius: 6px;
-                padding: 4px;
-                min-width: 180px;
+                padding: 4px 0px;
             }}
-            QMenu::item {{ padding: 6px 12px 6px 8px; border-radius: 4px; }}
-            QMenu::item:selected {{ background: {ACCENT_BLUE.name()}; }}
+            QMenu::item {{
+                padding: 0px;
+                margin: 0px;
+            }}
         """)
         self.setMenu(self._menu)
         self._set_placeholder()
         self._avatar_loaders: list[ImageLoader] = []
         self._avatar_cache: dict[str, QPixmap] = {}
+        self._item_widgets: dict[str, UserMenuItemWidget] = {}
 
     def _set_placeholder(self):
         pm = QPixmap(26, 26)
@@ -935,20 +1085,46 @@ class UserAvatarButton(QToolButton):
     def update_users(self, users: dict[str, dict], selected_id: str | None,
                      on_select):
         self._menu.clear()
+        self._item_widgets.clear()
+
+        min_w = 180
+        for u_info in users.values():
+            name_len = len(u_info.get("username", ""))
+            min_w = max(min_w, name_len * 9 + 65)
 
         for uid, info in users.items():
             username = info.get("username", "Unknown")
             is_selected = uid == selected_id
 
-            action = QAction(self._menu)
-            action.setText(("✓  " if is_selected else "     ") + username)
-            action.setData(uid)
-            action.triggered.connect(lambda checked, u=uid: on_select(u))
+            avatar_url = info.get("avatar")
+            if avatar_url:
+                if not (avatar_url.startswith("http://") or avatar_url.startswith("https://")):
+                    if avatar_url.startswith("/"):
+                        avatar_url = f"https://discord.com{avatar_url}"
+                    else:
+                        avatar_url = f"https://discord.com/{avatar_url}"
+            else:
+                try:
+                    avatar_url = f"https://cdn.discordapp.com/embed/avatars/{int(uid) % 5}.png"
+                except (ValueError, TypeError):
+                    avatar_url = "https://cdn.discordapp.com/embed/avatars/0.png"
 
-            if uid in self._avatar_cache:
-                action.setIcon(QIcon(self._avatar_cache[uid]))
-            elif info.get("avatar"):
-                self._load_avatar(uid, info["avatar"], action)
+            cached_pm = self._avatar_cache.get(uid)
+            item_widget = UserMenuItemWidget(uid, username, is_selected, cached_pm, self._menu)
+            item_widget.setMinimumWidth(min_w)
+            self._item_widgets[uid] = item_widget
+
+            action = QWidgetAction(self._menu)
+            action.setDefaultWidget(item_widget)
+
+            def on_item_clicked(u=uid):
+                on_select(u)
+                self._menu.close()
+
+            item_widget.clicked.connect(on_item_clicked)
+
+            if not cached_pm and avatar_url:
+                self._load_avatar(uid, avatar_url, item_widget)
 
             self._menu.addAction(action)
 
@@ -956,14 +1132,15 @@ class UserAvatarButton(QToolButton):
             self.setIcon(QIcon(self._avatar_cache[selected_id]))
             self.setIconSize(QSize(26, 26))
 
-    def _load_avatar(self, user_id: str, url: str, action: QAction):
+    def _load_avatar(self, user_id: str, url: str, item_widget: UserMenuItemWidget):
         loader = ImageLoader(url, QSize(24, 24))
         self._avatar_loaders.append(loader)
 
         def on_loaded(_url: str, pm: QPixmap):
             circular = make_circle_pixmap(pm, 24)
             self._avatar_cache[user_id] = circular
-            action.setIcon(QIcon(circular))
+            if user_id in self._item_widgets:
+                self._item_widgets[user_id].set_avatar(circular)
             loader.deleteLater()
             if loader in self._avatar_loaders:
                 self._avatar_loaders.remove(loader)
@@ -1062,9 +1239,18 @@ class MainWindow(QMainWindow):
                 color: {TEXT_PRIMARY.name()};
                 border: 1px solid {BORDER.name()};
                 border-radius: 6px;
-                padding: 4px;
+                padding: 4px 0px;
             }}
-            QMenu::item:selected {{ background: {ACCENT_BLUE.name()}; border-radius: 4px; }}
+            QMenu::item {{
+                padding: 5px 16px 5px 12px;
+                background: transparent;
+                border-radius: 0px;
+                margin: 0px;
+            }}
+            QMenu::item:selected {{
+                background: {ACCENT_BLUE.name()};
+                border-radius: 0px;
+            }}
         """)
 
     def _load_app_icon(self) -> QIcon:
