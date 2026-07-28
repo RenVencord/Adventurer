@@ -76,13 +76,28 @@ def get_log_since(cursor: int) -> tuple[list[dict], int]:
     return entries, new_cursor
 
 
+def _resolve_avatar_url(user_id: str, avatar: str | None) -> str:
+    if not avatar:
+        try:
+            idx = int(user_id) % 5
+        except (ValueError, TypeError):
+            idx = 0
+        return f"https://cdn.discordapp.com/embed/avatars/{idx}.png"
+    if avatar.startswith("http://") or avatar.startswith("https://"):
+        return avatar
+    if avatar.startswith("/"):
+        return f"https://discord.com{avatar}"
+    return f"https://discord.com/{avatar}"
+
+
 def _get_or_create_user(user_id: str, username: str, avatar: str | None) -> tuple[dict, bool]:
     is_new = False
+    effective_avatar = _resolve_avatar_url(user_id, avatar)
     if user_id not in _users:
         is_new = True
         _users[user_id] = {
             "username": username,
-            "avatar": avatar,
+            "avatar": effective_avatar,
             "quests": [],
             "last_heartbeat_time": None,
             "missed_beats": 0,
@@ -93,9 +108,9 @@ def _get_or_create_user(user_id: str, username: str, avatar: str | None) -> tupl
         }
     else:
         _users[user_id]["username"] = username
-        if avatar:
-            _users[user_id]["avatar"] = avatar
+        _users[user_id]["avatar"] = effective_avatar
     return _users[user_id], is_new
+
 
 
 def tick_heartbeat_watchdog():
@@ -145,7 +160,7 @@ def set_quests(user_id: str, username: str, avatar: str | None, quests: list[dic
 
         if is_new and _log_settings.get("accounts", False) and not getattr(threading.current_thread(), "_initial_load",
                                                                            False):
-            _log.append({"ts": datetime.now().strftime("%H:%M:%S"), "msg": f"[{username}] Account connected",
+            _log.append({"ts": datetime.now().strftime("%H:%M:%S"), "msg": f"[{username}] Account connected (avatar: {u['avatar']} | raw: {avatar})",
                          "idx": _log_cursor})
             _log_cursor += 1
 

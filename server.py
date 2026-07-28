@@ -64,7 +64,40 @@ CORS(app, origins=[
     "https://ptb.discord.com"
 ])
 
-BASE_DIR = APPDATA_DIR / "fake_games"
+PREFS_FILE = APPDATA_DIR / "adventurer_settings.json"
+
+
+def get_fake_games_dir() -> Path:
+    if PREFS_FILE.exists():
+        try:
+            import json
+            with open(PREFS_FILE, "r") as f:
+                data = json.load(f)
+                val = data.get("fake_games_dir")
+                if val:
+                    return Path(os.path.expanduser(val)).resolve()
+        except Exception:
+            pass
+    return APPDATA_DIR
+
+
+_single_instance_mutex = None
+
+
+def ensure_single_instance(mutex_name: str = "Adventurer_SingleInstance_Mutex") -> bool:
+    global _single_instance_mutex
+    if sys.platform == "win32":
+        import ctypes
+        kernel32 = ctypes.windll.kernel32
+        ERROR_ALREADY_EXISTS = 183
+        mutex = kernel32.CreateMutexW(None, False, mutex_name)
+        if kernel32.GetLastError() == ERROR_ALREADY_EXISTS:
+            return False
+        _single_instance_mutex = mutex
+        return True
+    return True
+
+
 STUB_EXE = APPDATA_DIR / ("stub.exe" if sys.platform == "win32" else "stub")
 
 
@@ -122,7 +155,7 @@ ensure_appdata_dir()
 _install_stub_if_needed()
 log.info(f"App data directory: {APPDATA_DIR}")
 log.info(f"Stub executable path: {STUB_EXE} (exists: {STUB_EXE.exists()})")
-log.info(f"Fake games directory: {BASE_DIR}")
+log.info(f"Fake games directory: {get_fake_games_dir()}")
 server_state.log_event(f"Data dir: {APPDATA_DIR}")
 server_state.log_event(f"Stub: {STUB_EXE} ({'found' if STUB_EXE.exists() else 'NOT found'})")
 DETECTABLE_URL = "https://discord.com/api/v10/applications/detectable"
@@ -186,7 +219,7 @@ def ensure_executable(app_data: dict, user_id: str | None = None, force_exe: str
     if not exe_name.lower().endswith(".exe"):
         exe_name += ".exe"
 
-    exe_path = BASE_DIR / name / exe_name
+    exe_path = get_fake_games_dir() / name / exe_name
     log.info(f"ensure_executable: target exe path = {exe_path}")
     exe_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -302,10 +335,9 @@ def _run_server_thread(port: int = 5000):
 def cleanup_stubs():
     mode, days = server_state.get_stub_cleanup()
 
-    if mode == "never":
-        return
+    base_dir = get_fake_games_dir()
 
-    if not BASE_DIR.exists():
+    if not base_dir.exists():
         return
 
     running_paths = []
@@ -319,7 +351,7 @@ def cleanup_stubs():
             pass
 
     now = time.time()
-    for app_dir in BASE_DIR.iterdir():
+    for app_dir in base_dir.iterdir():
         if not app_dir.is_dir():
             continue
 
@@ -519,7 +551,8 @@ def heartbeat():
         return jsonify({"error": "quests must be an array"}), 400
 
     server_state.set_quests(user_id, username, avatar, quests)
-    log.info(f"Heartbeat from \033[96m{username} ({user_id})\033[0m: {len(quests)} quests")
+    user_avatar = server_state.get_users().get(user_id, {}).get("avatar")
+    log.info(f"Heartbeat from \033[96m{username} ({user_id})\033[0m: {len(quests)} quests | Avatar: {user_avatar} (raw: {avatar!r})")
 
     if server_state.should_log("heartbeats"):
         server_state.log_event(f"Heartbeat synchronized ({len(quests)} quests active/queued)", user_id)
@@ -616,6 +649,21 @@ def run_server(port: int = 5000):
 
 
 if __name__ == "__main__":
+    if not ensure_single_instance():
+        log.warning("Another instance of Adventurer is already running.")
+        if sys.platform == "win32":
+            try:
+                import ctypes
+                ctypes.windll.user32.MessageBoxW(
+                    0,
+                    "Adventurer is already running.",
+                    "Adventurer",
+                    0x30
+                )
+            except Exception:
+                pass
+        sys.exit(0)
+
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 5000
 
     t = threading.Thread(target=_run_server_thread, args=(port,), daemon=True)
