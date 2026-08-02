@@ -11,7 +11,7 @@ from PyQt6.QtWidgets import (
     QLabel, QScrollArea, QFrame, QSystemTrayIcon, QMenu, QSizePolicy,
     QDialog, QCheckBox, QSpinBox, QFormLayout, QDialogButtonBox,
     QTabWidget, QPlainTextEdit, QToolButton, QComboBox, QLineEdit,
-    QPushButton, QFileDialog, QWidgetAction
+    QPushButton, QFileDialog, QWidgetAction, QMessageBox, QGroupBox, QListView
 )
 from PyQt6.QtCore import Qt, QTimer, QThread, pyqtSignal, QSize, QRect, QByteArray, QBuffer, QIODevice
 from PyQt6.QtGui import (
@@ -21,6 +21,8 @@ from PyQt6.QtGui import (
 from PyQt6.QtSvg import QSvgRenderer
 
 import server_state
+import updater
+import vencord_helper
 
 # ---------------------------------------------------------------------------
 # Path helpers: resolve bundled assets (PyInstaller) and user data directory
@@ -73,13 +75,7 @@ def _load_svg_icon(path: str, size: int = 18) -> QIcon:
 
 
 def load_prefs() -> dict:
-    if os.path.exists(PREFS_FILE):
-        try:
-            with open(PREFS_FILE, "r") as f:
-                return json.load(f)
-        except Exception:
-            pass
-    return {
+    defaults = {
         "orbs_only": True,
         "min_orbs": 0,
         "notify_video": True,
@@ -90,8 +86,22 @@ def load_prefs() -> dict:
         "log_stubs": True,
         "stub_cleanup_mode": "days",
         "stub_cleanup_days": 7,
-        "fake_games_dir": APPDATA_DIR
+        "fake_games_dir": APPDATA_DIR,
+        "update_mode_app": "Ask",
+        "update_mode_plugin": "Auto",
+        "update_scope": "Any",
+        "vencord_source_dir": "",
+        "skipped_app_version": "",
+        "skipped_plugin_version": ""
     }
+    if os.path.exists(PREFS_FILE):
+        try:
+            with open(PREFS_FILE, "r") as f:
+                saved = json.load(f)
+                defaults.update(saved)
+        except Exception:
+            pass
+    return defaults
 
 
 def save_prefs(prefs: dict):
@@ -751,11 +761,15 @@ class BannerBar(QLabel):
         self.show()
 
 
+def style_combobox(combo: QComboBox):
+    combo.setView(QListView())
+
+
 class SettingsDialog(QDialog):
     def __init__(self, prefs: dict, parent=None):
         super().__init__(parent)
         self._prefs = prefs
-        self.setWindowTitle("Adventurer Settings")
+        self.setWindowTitle("General Settings")
         self.setFixedWidth(360)
         self.setStyleSheet(f"""
             QDialog {{ background: {BG_DARK.name()}; color: {TEXT_PRIMARY.name()}; }}
@@ -776,12 +790,41 @@ class SettingsDialog(QDialog):
                 background: {ACCENT_BLUE.name()};
                 image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='3.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='20 6 9 17 4 12'%3E%3C/polyline%3E%3C/svg%3E");
             }}
-            QSpinBox {{
+            QSpinBox, QLineEdit {{
                 background: {BG_CARD.name()};
                 color: {TEXT_PRIMARY.name()};
                 border: 1px solid {BORDER.name()};
                 border-radius: 4px;
                 padding: 3px 6px;
+            }}
+            QComboBox {{
+                background: {BG_CARD.name()};
+                color: {TEXT_PRIMARY.name()};
+                border: 1px solid {BORDER.name()};
+                border-radius: 4px;
+                padding: 3px 6px;
+            }}
+            QComboBox:hover {{ border: 1px solid {ACCENT_BLUE.name()}; }}
+            QComboBox::drop-down {{ border: none; width: 20px; }}
+            QComboBox::down-arrow {{ image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 24 24' fill='none' stroke='%23949ba4' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E"); }}
+            QComboBox QAbstractItemView {{
+                background: {BG_CARD.name()};
+                color: {TEXT_PRIMARY.name()};
+                border: 1px solid {BORDER.name()};
+                border-radius: 6px;
+                padding: 2px 0px;
+                outline: none;
+            }}
+            QComboBox QAbstractItemView::item {{
+                padding: 2px 6px;
+                background: transparent;
+                color: {TEXT_PRIMARY.name()};
+                border: none;
+            }}
+            QComboBox QAbstractItemView::item:selected, QComboBox QAbstractItemView::item:hover {{
+                background-color: {ACCENT_BLUE.name()};
+                color: white;
+                border: none;
             }}
             QPushButton {{
                 background: {ACCENT_BLUE.name()};
@@ -821,20 +864,7 @@ class SettingsDialog(QDialog):
         form.addRow(div)
 
         self.combo_cleanup = QComboBox()
-        self.combo_cleanup.setStyleSheet(f"""
-            QComboBox {{
-                background: {BG_CARD.name()};
-                color: {TEXT_PRIMARY.name()};
-                border: 1px solid {BORDER.name()};
-                border-radius: 4px;
-                padding: 3px 6px;
-            }}
-            QComboBox QAbstractItemView {{
-                background: {BG_CARD.name()};
-                color: {TEXT_PRIMARY.name()};
-                selection-background-color: {ACCENT_BLUE.name()};
-            }}
-        """)
+        style_combobox(self.combo_cleanup)
         self.combo_cleanup.addItem("Save for X days", "days")
         self.combo_cleanup.addItem("Clean on quest end", "always")
         self.combo_cleanup.addItem("Never clean", "never")
@@ -862,15 +892,6 @@ class SettingsDialog(QDialog):
         dir_box = QHBoxLayout()
         self.txt_fake_games_dir = QLineEdit()
         self.txt_fake_games_dir.setText(prefs.get("fake_games_dir", APPDATA_DIR))
-        self.txt_fake_games_dir.setStyleSheet(f"""
-            QLineEdit {{
-                background: {BG_CARD.name()};
-                color: {TEXT_PRIMARY.name()};
-                border: 1px solid {BORDER.name()};
-                border-radius: 4px;
-                padding: 3px 6px;
-            }}
-        """)
         btn_browse_dir = QPushButton()
         browse_icon = _load_svg_icon(BROWSE_ICON_SVG_PATH, 16)
         if not browse_icon.isNull():
@@ -915,6 +936,238 @@ class SettingsDialog(QDialog):
         return p
 
 
+class UpdateSettingsDialog(QDialog):
+    def __init__(self, prefs: dict, parent=None):
+        super().__init__(parent)
+        self._prefs = prefs
+        self.setWindowTitle("Update Settings")
+        self.setFixedWidth(420)
+        self.setStyleSheet(f"""
+            QDialog {{ background: {BG_DARK.name()}; color: {TEXT_PRIMARY.name()}; }}
+            QLabel {{ color: {TEXT_PRIMARY.name()}; }}
+            QComboBox {{
+                background: {BG_CARD.name()};
+                color: {TEXT_PRIMARY.name()};
+                border: 1px solid {BORDER.name()};
+                border-radius: 4px;
+                padding: 4px 6px;
+            }}
+            QComboBox:hover {{ border: 1px solid {ACCENT_BLUE.name()}; }}
+            QComboBox::drop-down {{ border: none; width: 20px; }}
+            QComboBox::down-arrow {{ image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 24 24' fill='none' stroke='%23949ba4' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E"); }}
+            QComboBox QAbstractItemView {{
+                background: {BG_CARD.name()};
+                color: {TEXT_PRIMARY.name()};
+                border: 1px solid {BORDER.name()};
+                border-radius: 6px;
+                padding: 2px 0px;
+                outline: none;
+            }}
+            QComboBox QAbstractItemView::item {{
+                padding: 2px 6px;
+                background: transparent;
+                color: {TEXT_PRIMARY.name()};
+                border: none;
+            }}
+            QComboBox QAbstractItemView::item:selected, QComboBox QAbstractItemView::item:hover {{
+                background-color: {ACCENT_BLUE.name()};
+                color: white;
+                border: none;
+            }}
+            QPushButton {{
+                background: {ACCENT_BLUE.name()};
+                color: white;
+                border: none;
+                border-radius: 4px;
+                padding: 6px 16px;
+                font-weight: 700;
+            }}
+            QPushButton:hover {{ background: #4752c4; }}
+        """)
+
+        layout = QVBoxLayout(self)
+        layout.setSpacing(16)
+        layout.setContentsMargins(20, 20, 20, 20)
+
+        form = QFormLayout()
+        form.setSpacing(12)
+
+        self.combo_app_mode = QComboBox()
+        style_combobox(self.combo_app_mode)
+        self.combo_app_mode.addItem("Ask before updating", "Ask")
+        self.combo_app_mode.addItem("Automatic background update", "Auto")
+        app_m_idx = self.combo_app_mode.findData(prefs.get("update_mode_app", "Ask"))
+        if app_m_idx >= 0:
+            self.combo_app_mode.setCurrentIndex(app_m_idx)
+        form.addRow("App Executable Updates:", self.combo_app_mode)
+
+        self.combo_plugin_mode = QComboBox()
+        style_combobox(self.combo_plugin_mode)
+        self.combo_plugin_mode.addItem("Automatic background update", "Auto")
+        self.combo_plugin_mode.addItem("Ask before updating", "Ask")
+        plug_m_idx = self.combo_plugin_mode.findData(prefs.get("update_mode_plugin", "Auto"))
+        if plug_m_idx >= 0:
+            self.combo_plugin_mode.setCurrentIndex(plug_m_idx)
+        form.addRow("Vencord Plugin Updates:", self.combo_plugin_mode)
+
+        self.combo_scope = QComboBox()
+        style_combobox(self.combo_scope)
+        self.combo_scope.addItem("Any update (All versions)", "Any")
+        self.combo_scope.addItem("Major updates only", "Major")
+        self.combo_scope.addItem("Disable update checks", "None")
+        scope_idx = self.combo_scope.findData(prefs.get("update_scope", "Any"))
+        if scope_idx >= 0:
+            self.combo_scope.setCurrentIndex(scope_idx)
+        form.addRow("Update Scope:", self.combo_scope)
+
+        layout.addLayout(form)
+
+        btns = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        btns.accepted.connect(self.accept)
+        btns.rejected.connect(self.reject)
+        layout.addWidget(btns)
+
+    def get_prefs(self) -> dict:
+        p = dict(self._prefs)
+        p["update_mode_app"] = self.combo_app_mode.currentData()
+        p["update_mode_plugin"] = self.combo_plugin_mode.currentData()
+        p["update_scope"] = self.combo_scope.currentData()
+        return p
+
+
+class VencordManagerDialog(QDialog):
+    def __init__(self, prefs: dict, parent=None):
+        super().__init__(parent)
+        self._prefs = prefs
+        self.setWindowTitle("Vencord Manager")
+        self.setFixedSize(480, 380)
+        self.setStyleSheet(f"""
+            QDialog {{ background: {BG_DARK.name()}; color: {TEXT_PRIMARY.name()}; }}
+            QLabel {{ color: {TEXT_PRIMARY.name()}; }}
+            QLineEdit {{
+                background: {BG_CARD.name()};
+                color: {TEXT_PRIMARY.name()};
+                border: 1px solid {BORDER.name()};
+                border-radius: 4px;
+                padding: 4px 6px;
+            }}
+            QPushButton {{
+                background: {ACCENT_BLUE.name()};
+                color: white;
+                border: none;
+                border-radius: 4px;
+                padding: 6px 14px;
+                font-weight: 700;
+            }}
+            QPushButton:hover {{ background: #4752c4; }}
+            QPushButton:disabled {{ background: {BG_MID.name()}; color: {TEXT_MUTED.name()}; }}
+        """)
+
+        layout = QVBoxLayout(self)
+        layout.setSpacing(12)
+        layout.setContentsMargins(16, 16, 16, 16)
+
+        form = QFormLayout()
+        vencord_box = QHBoxLayout()
+        self.txt_vencord_dir = QLineEdit()
+        saved_v_dir = prefs.get("vencord_source_dir", "") or vencord_helper.find_vencord_dir() or ""
+        self.txt_vencord_dir.setText(saved_v_dir)
+
+        btn_browse_v = QPushButton()
+        browse_icon = _load_svg_icon(BROWSE_ICON_SVG_PATH, 16)
+        if not browse_icon.isNull():
+            btn_browse_v.setIcon(browse_icon)
+            btn_browse_v.setIconSize(QSize(16, 16))
+        else:
+            btn_browse_v.setText("Browse...")
+        btn_browse_v.setFixedWidth(36)
+        btn_browse_v.setToolTip("Browse...")
+        btn_browse_v.clicked.connect(self._browse_vencord_dir)
+        vencord_box.addWidget(self.txt_vencord_dir)
+        vencord_box.addWidget(btn_browse_v)
+        form.addRow("Vencord Source Dir:", vencord_box)
+        layout.addLayout(form)
+
+        btn_box = QHBoxLayout()
+        self.btn_build_vencord = QPushButton("Sync && Build Vencord")
+        self.btn_build_vencord.clicked.connect(self._on_build_vencord)
+        btn_box.addWidget(self.btn_build_vencord)
+
+        self.btn_setup_vencord = QPushButton("1-Click Full Setup")
+        self.btn_setup_vencord.clicked.connect(self._on_setup_vencord)
+        btn_box.addWidget(self.btn_setup_vencord)
+        layout.addLayout(btn_box)
+
+        self.vencord_log = QPlainTextEdit()
+        self.vencord_log.setReadOnly(True)
+        self.vencord_log.setStyleSheet(f"background: {BG_CARD.name()}; color: {TEXT_MUTED.name()}; font-family: monospace; font-size: 11px;")
+        layout.addWidget(self.vencord_log)
+
+        btns = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        btns.accepted.connect(self.accept)
+        btns.rejected.connect(self.reject)
+        layout.addWidget(btns)
+
+        self._build_worker = None
+
+    def _browse_vencord_dir(self):
+        curr = self.txt_vencord_dir.text().strip() or os.path.expanduser("~")
+        chosen = QFileDialog.getExistingDirectory(self, "Select Vencord Source Directory", curr)
+        if chosen:
+            self.txt_vencord_dir.setText(chosen)
+
+    def _on_build_vencord(self):
+        target_dir = self.txt_vencord_dir.text().strip()
+        if not target_dir:
+            target_dir = vencord_helper.find_vencord_dir()
+            if target_dir:
+                self.txt_vencord_dir.setText(target_dir)
+
+        if not target_dir:
+            QMessageBox.warning(self, "Vencord Directory Required", "Please specify the directory where Vencord is built from source.")
+            return
+
+        self.vencord_log.appendPlainText("Starting Vencord sync and build...")
+        self.btn_build_vencord.setEnabled(False)
+        self.btn_setup_vencord.setEnabled(False)
+
+        self._build_worker = vencord_helper.VencordBuildWorker(target_dir, mode="build")
+        self._build_worker.log_signal.connect(self.vencord_log.appendPlainText)
+        self._build_worker.finished_signal.connect(self._on_worker_finished)
+        self._build_worker.start()
+
+    def _on_setup_vencord(self):
+        target_dir = self.txt_vencord_dir.text().strip() or os.path.join(os.path.expanduser("~"), "Vencord")
+        self.txt_vencord_dir.setText(target_dir)
+
+        self.vencord_log.appendPlainText("Starting 1-Click Full Vencord Setup...")
+        self.btn_build_vencord.setEnabled(False)
+        self.btn_setup_vencord.setEnabled(False)
+
+        self._build_worker = vencord_helper.VencordBuildWorker(target_dir, mode="setup")
+        self._build_worker.log_signal.connect(self.vencord_log.appendPlainText)
+        self._build_worker.finished_signal.connect(self._on_worker_finished)
+        self._build_worker.start()
+
+    def _on_worker_finished(self, success: bool, message: str):
+        self.btn_build_vencord.setEnabled(True)
+        self.btn_setup_vencord.setEnabled(True)
+        self.vencord_log.appendPlainText(f"\nStatus: {message}")
+        if success:
+            QMessageBox.information(self, "Vencord Build Complete", f"{message}\n\nPlease restart Discord (Ctrl+R) to apply changes.")
+        else:
+            QMessageBox.critical(self, "Vencord Build Failed", message)
+
+    def get_prefs(self) -> dict:
+        p = dict(self._prefs)
+        p["vencord_source_dir"] = self.txt_vencord_dir.text().strip()
+        return p
+
+
 class LoggingSettingsDialog(QDialog):
     def __init__(self, prefs: dict, parent=None):
         super().__init__(parent)
@@ -924,7 +1177,22 @@ class LoggingSettingsDialog(QDialog):
         self.setStyleSheet(f"""
             QDialog {{ background: {BG_DARK.name()}; color: {TEXT_PRIMARY.name()}; }}
             QLabel {{ color: {TEXT_PRIMARY.name()}; }}
-            QCheckBox {{ color: {TEXT_PRIMARY.name()}; }}
+            QCheckBox {{ color: {TEXT_PRIMARY.name()}; spacing: 8px; }}
+            QCheckBox::indicator {{
+                width: 14px;
+                height: 14px;
+                border: 1.5px solid {BORDER.name()};
+                border-radius: 3px;
+                background: {BG_CARD.name()};
+            }}
+            QCheckBox::indicator:unchecked:hover {{
+                border: 1.5px solid {ACCENT_BLUE.name()};
+            }}
+            QCheckBox::indicator:checked {{
+                border: 1.5px solid {ACCENT_BLUE.name()};
+                background: {ACCENT_BLUE.name()};
+                image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='3.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='20 6 9 17 4 12'%3E%3C/polyline%3E%3C/svg%3E");
+            }}
             QPushButton {{
                 background: {ACCENT_BLUE.name()};
                 color: white;
@@ -985,6 +1253,89 @@ class LoggingSettingsDialog(QDialog):
         p["log_stubs"] = self.chk_log_stubs.isChecked()
         p["log_server"] = self.chk_log_server.isChecked()
         return p
+
+
+class AppUpdateDialog(QDialog):
+    def __init__(self, version: str, changelog: str, download_url: str, parent=None):
+        super().__init__(parent)
+        self.version = version
+        self.changelog = changelog
+        self.download_url = download_url
+        self.skip_requested = False
+
+        self.setWindowTitle(f"Adventurer Update Available ({version})")
+        self.setFixedSize(450, 320)
+        self.setStyleSheet(f"""
+            QDialog {{ background: {BG_DARK.name()}; color: {TEXT_PRIMARY.name()}; }}
+            QLabel {{ color: {TEXT_PRIMARY.name()}; }}
+            QPlainTextEdit {{ background: {BG_CARD.name()}; color: {TEXT_PRIMARY.name()}; border: 1px solid {BORDER.name()}; border-radius: 4px; font-family: sans-serif; font-size: 12px; }}
+            QPushButton {{
+                background: {ACCENT_BLUE.name()};
+                color: white;
+                border: none;
+                border-radius: 4px;
+                padding: 6px 14px;
+                font-weight: 700;
+            }}
+            QPushButton:hover {{ background: #4752c4; }}
+        """)
+
+        layout = QVBoxLayout(self)
+        layout.setSpacing(12)
+        layout.setContentsMargins(16, 16, 16, 16)
+
+        title_lbl = QLabel(f"<b>Adventurer {version} is now available!</b>")
+        title_lbl.setStyleSheet("font-size: 14px;")
+        layout.addWidget(title_lbl)
+
+        changelog_txt = QPlainTextEdit()
+        changelog_txt.setReadOnly(True)
+        changelog_txt.setPlainText(changelog)
+        layout.addWidget(changelog_txt)
+
+        btn_layout = QHBoxLayout()
+        btn_skip = QPushButton("Skip Version")
+        btn_skip.setStyleSheet(f"background: {BG_MID.name()}; color: {TEXT_MUTED.name()};")
+        btn_skip.clicked.connect(self._on_skip)
+
+        btn_later = QPushButton("Remind Me Later")
+        btn_later.setStyleSheet(f"background: {BG_MID.name()}; color: {TEXT_PRIMARY.name()};")
+        btn_later.clicked.connect(self.reject)
+
+        btn_update = QPushButton("Update Now")
+        btn_update.clicked.connect(self.accept)
+
+        btn_layout.addWidget(btn_skip)
+        btn_layout.addStretch()
+        btn_layout.addWidget(btn_later)
+        btn_layout.addWidget(btn_update)
+        layout.addLayout(btn_layout)
+
+    def _on_skip(self):
+        self.skip_requested = True
+        self.reject()
+
+
+class UpdateCheckerThread(QThread):
+    app_update_signal = pyqtSignal(str, str, str)
+    plugin_update_signal = pyqtSignal(str)
+
+    def __init__(self, prefs: dict):
+        super().__init__()
+        self.prefs = prefs
+
+    def run(self):
+        try:
+            upd = updater.AutoUpdater(self.prefs)
+            app_update, app_ver, changelog, d_url = upd.check_app_update()
+            if app_update:
+                self.app_update_signal.emit(app_ver, changelog, d_url)
+
+            plugin_update, plug_ver = upd.check_plugin_update()
+            if plugin_update:
+                self.plugin_update_signal.emit(plug_ver)
+        except Exception as e:
+            print(f"Update checker thread exception: {e}")
 
 
 class UserMenuItemWidget(QFrame):
@@ -1183,11 +1534,90 @@ class MainWindow(QMainWindow):
         self._log_cursor: int = 0
 
         self._quest_svg_pm = _load_quest_svg(64)
+        self._upd_checker = None
+        self._plugin_worker = None
 
         self._setup_style()
         self._setup_tray()
         self._setup_ui()
         self._setup_timer()
+        self._start_update_checker()
+        self._check_vencord_path_on_startup()
+
+    def _check_vencord_path_on_startup(self):
+        vencord_dir = self._prefs.get("vencord_source_dir", "").strip()
+        if not vencord_dir or not os.path.exists(vencord_dir):
+            auto_dir = vencord_helper.find_vencord_dir()
+            if not auto_dir or not os.path.exists(auto_dir):
+                QTimer.singleShot(400, self._open_vencord_settings)
+
+    def _start_update_checker(self):
+        if self._prefs.get("update_scope", "Any") == "None":
+            return
+        self._upd_checker = UpdateCheckerThread(self._prefs)
+        self._upd_checker.app_update_signal.connect(self._handle_app_update)
+        self._upd_checker.plugin_update_signal.connect(self._handle_plugin_update)
+        self._upd_checker.start()
+
+    def _handle_app_update(self, version: str, changelog: str, download_url: str):
+        mode = self._prefs.get("update_mode_app", "Ask")
+        if mode == "Auto":
+            upd = updater.AutoUpdater(self._prefs)
+            upd.download_app_update(download_url)
+        else:
+            dlg = AppUpdateDialog(version, changelog, download_url, self)
+            res = dlg.exec()
+            if res == QDialog.DialogCode.Accepted:
+                upd = updater.AutoUpdater(self._prefs)
+                upd.download_app_update(download_url)
+            elif dlg.skip_requested:
+                self._prefs["skipped_app_version"] = version
+                save_prefs(self._prefs)
+
+    def _handle_plugin_update(self, version: str):
+        mode = self._prefs.get("update_mode_plugin", "Auto")
+        vencord_dir = self._prefs.get("vencord_source_dir", "") or vencord_helper.find_vencord_dir()
+        if not vencord_dir or not os.path.exists(vencord_dir):
+            reply = QMessageBox.question(
+                self,
+                "Vencord Directory Required",
+                f"A new Adventurer Plugin update ({version}) is available, but your Vencord source directory is not configured.\n\nWould you like to open Settings to set up Vencord?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+            )
+            if reply == QMessageBox.StandardButton.Yes:
+                self._open_vencord_settings()
+            return
+
+        if mode == "Auto":
+            self._apply_plugin_update(version, vencord_dir)
+        else:
+            reply = QMessageBox.question(
+                self,
+                "Adventurer Plugin Update Available",
+                f"A new Adventurer Vencord Plugin update ({version}) is available.\n\nWould you like to install and rebuild Vencord now?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+            )
+            if reply == QMessageBox.StandardButton.Yes:
+                self._apply_plugin_update(version, vencord_dir)
+
+    def _apply_plugin_update(self, version: str, vencord_dir: str):
+        upd = updater.AutoUpdater(self._prefs)
+        code = upd.fetch_latest_plugin_code()
+        if code:
+            synced = vencord_helper.sync_plugin_file(vencord_dir, code)
+            if synced:
+                self._plugin_worker = vencord_helper.VencordBuildWorker(vencord_dir, mode="build")
+                def on_finished(success, msg):
+                    if success:
+                        QMessageBox.information(
+                            self,
+                            "Plugin Updated & Vencord Rebuilt",
+                            f"Adventurer Plugin has been updated to {version} and Vencord was successfully rebuilt!\n\nPlease restart Discord (Ctrl+R) to apply changes."
+                        )
+                    else:
+                        QMessageBox.warning(self, "Vencord Build Failed", f"Plugin file was updated, but Vencord build failed:\n{msg}")
+                self._plugin_worker.finished_signal.connect(on_finished)
+                self._plugin_worker.start()
 
     def _setup_style(self):
         self.setStyleSheet(f"""
@@ -1309,6 +1739,14 @@ class MainWindow(QMainWindow):
         notif_action = QAction("General Settings...", self)
         notif_action.triggered.connect(self._open_settings)
         settings_menu.addAction(notif_action)
+
+        updates_action = QAction("Updates...", self)
+        updates_action.triggered.connect(self._open_updates_settings)
+        settings_menu.addAction(updates_action)
+
+        vencord_action = QAction("Vencord Manager...", self)
+        vencord_action.triggered.connect(self._open_vencord_settings)
+        settings_menu.addAction(vencord_action)
 
         logging_action = QAction("Logging...", self)
         logging_action.triggered.connect(self._open_logging_settings)
@@ -1606,6 +2044,18 @@ class MainWindow(QMainWindow):
                 self._prefs.get("stub_cleanup_days", 7)
             )
             self._last_quest_ids = []
+
+    def _open_updates_settings(self):
+        dlg = UpdateSettingsDialog(self._prefs, self)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            self._prefs = dlg.get_prefs()
+            save_prefs(self._prefs)
+
+    def _open_vencord_settings(self):
+        dlg = VencordManagerDialog(self._prefs, self)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            self._prefs = dlg.get_prefs()
+            save_prefs(self._prefs)
 
     def _open_logging_settings(self):
         dlg = LoggingSettingsDialog(self._prefs, self)
