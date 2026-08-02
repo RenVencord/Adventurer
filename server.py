@@ -465,6 +465,12 @@ def run():
             "fallback_exe": fallback_exe
         }), 400
 
+    if str(app_id) in _running and _running[str(app_id)].poll() is None:
+        log.info(f"App {app_id} is already running")
+        quest_id = quest_obj.get("id") if quest_obj else None
+        server_state.set_active_quest(quest_id, quest_obj, "running", 0)
+        return jsonify({"status": "launched", "name": app_data["name"]})
+
     _kill_all_running()
 
     try:
@@ -475,7 +481,7 @@ def run():
         server_state.log_event(f"Error: {msg}", user_id)
         return jsonify({"error": msg}), 500
 
-    _running[app_id] = proc
+    _running[str(app_id)] = proc
 
     quest_id = quest_obj.get("id") if quest_obj else None
     server_state.set_active_quest(quest_id, quest_obj, "running", 0)
@@ -485,6 +491,99 @@ def run():
     server_state.log_event(msg, user_id)
 
     return jsonify({"status": "launched", "name": app_data["name"]})
+
+
+def get_quest_app_id(quest: dict) -> str | None:
+    if not quest or not isinstance(quest, dict):
+        return None
+    cfg = quest.get("config") or {}
+    app_obj = cfg.get("application") or {}
+    if app_obj.get("id"):
+        return str(app_obj["id"])
+    if quest.get("resolvedAppId"):
+        return str(quest["resolvedAppId"])
+    tasks = (cfg.get("taskConfigV2") or {}).get("tasks") or {}
+    for task_key in ["PLAY_ON_DESKTOP", "STREAM_ON_DESKTOP"]:
+        task_apps = (tasks.get(task_key) or {}).get("applications") or []
+        if task_apps and isinstance(task_apps, list) and len(task_apps) > 0:
+            app_id = task_apps[0].get("id")
+            if app_id:
+                return str(app_id)
+    if quest.get("application_id"):
+        return str(quest["application_id"])
+    return None
+
+
+def _is_quest_expired(quest: dict) -> bool:
+    if not quest or not isinstance(quest, dict):
+        return False
+    cfg = quest.get("config") or {}
+    expires_at = cfg.get("expiresAt")
+    if not expires_at:
+        return False
+    try:
+        from datetime import datetime, timezone
+        expiry = datetime.fromisoformat(expires_at)
+        if expiry.tzinfo is None:
+            expiry = expiry.replace(tzinfo=timezone.utc)
+        return datetime.now(timezone.utc) > expiry
+    except Exception:
+        return False
+
+
+def get_first_queued_quest(user_id: str | None = None) -> dict | None:
+    state = server_state.get_state(user_id)
+    quests = state.get("quests") or []
+    skipped_ids = set(state.get("skipped_quest_ids") or [])
+
+    eligible = []
+    for q in quests:
+        if not q or not isinstance(q, dict) or not q.get("id"):
+            continue
+        qid = str(q["id"])
+        if qid in skipped_ids:
+            continue
+        user_status = q.get("userStatus")
+        if user_status is None:
+            continue
+        if user_status.get("completedAt") or user_status.get("claimedAt"):
+            continue
+        if _is_quest_expired(q):
+            continue
+
+        cfg = q.get("config") or {}
+        tasks = (cfg.get("taskConfigV2") or {}).get("tasks") or {}
+        has_desktop_task = "PLAY_ON_DESKTOP" in tasks or "STREAM_ON_DESKTOP" in tasks
+        app_id = get_quest_app_id(q)
+        if not has_desktop_task or not app_id:
+            continue
+
+        task_key = "PLAY_ON_DESKTOP" if "PLAY_ON_DESKTOP" in tasks else "STREAM_ON_DESKTOP"
+        task_obj = tasks.get(task_key) or {}
+        target = task_obj.get("target") or 1
+        prog_entry = (user_status.get("progress") or {}).get(task_key) or {}
+        val = prog_entry.get("value", 0) if isinstance(prog_entry, dict) else 0
+        pct = val / target if target > 0 else 0.0
+
+        expires_at = cfg.get("expiresAt")
+        exp_ts = float("inf")
+        if expires_at:
+            try:
+                from datetime import datetime, timezone
+                dt = datetime.fromisoformat(expires_at)
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
+                exp_ts = dt.timestamp()
+            except Exception:
+                pass
+
+        eligible.append((pct, exp_ts, q))
+
+    if not eligible:
+        return None
+
+    eligible.sort(key=lambda item: (-item[0], item[1]))
+    return eligible[0][2]
 
 
 @app.route("/active", methods=["POST"])
@@ -512,6 +611,7 @@ def stop():
     body = request.get_json(silent=True) or {}
     user_id = body.get("userId") if body else None
 
+    server_state.set_auto_complete_enabled(False)
     _kill_all_running()
     server_state.set_active_quest(None, None, None, 0)
     cleanup_stubs()
@@ -521,6 +621,72 @@ def stop():
     server_state.log_event(msg, user_id)
 
     return jsonify({"status": "stopped"})
+
+
+@app.route("/start", methods=["POST"])
+def start():
+    body = request.get_json(silent=True) or {}
+    user_id = body.get("userId") if body else None
+
+    server_state.set_auto_complete_enabled(True)
+    msg = "Auto complete started"
+    log.info(msg)
+    server_state.log_event(msg, user_id)
+
+    first_quest = get_first_queued_quest(user_id)
+    if first_quest:
+        app_id = get_quest_app_id(first_quest)
+        if app_id:
+            app_data = find_app(str(app_id))
+            if not app_data:
+                cfg = first_quest.get("config") or {}
+                app_name = (cfg.get("application") or {}).get("name")
+                if not app_name:
+                    tasks = (cfg.get("taskConfigV2") or {}).get("tasks") or {}
+                    for task_key in ["PLAY_ON_DESKTOP", "STREAM_ON_DESKTOP"]:
+                        task_apps = (tasks.get(task_key) or {}).get("applications") or []
+                        if task_apps and isinstance(task_apps, list) and len(task_apps) > 0:
+                            app_name = task_apps[0].get("name")
+                            if app_name:
+                                break
+                if not app_name:
+                    app_name = (cfg.get("messages") or {}).get("gameTitle")
+                if app_name:
+                    app_data = {"id": str(app_id), "name": app_name, "executables": []}
+
+            if app_data:
+                try:
+                    exe_path = ensure_executable(app_data, user_id)
+                    if exe_path:
+                        _kill_all_running()
+                        proc = launch_exe(exe_path.absolute())
+                        _running[str(app_id)] = proc
+                        server_state.set_active_quest(first_quest.get("id"), first_quest, "running", 0)
+                        server_state.log_event(f"Started quest: {server_state._get_quest_name(first_quest)}", user_id)
+                except Exception as e:
+                    log.error(f"Failed to launch first quest in queue: {e}")
+
+    return jsonify({"status": "started"})
+
+
+@app.route("/skip", methods=["POST"])
+def skip():
+    body = request.get_json(silent=True) or {}
+    user_id = body.get("userId") if body else None
+    quest_id = body.get("questId")
+
+    if quest_id:
+        server_state.add_skipped_quest(quest_id)
+        active_id, _ = server_state.get_active_quest()
+        if active_id == quest_id:
+            _kill_all_running()
+            server_state.set_active_quest(None, None, None, 0)
+            cleanup_stubs()
+        msg = f"Quest skipped: {quest_id}"
+        log.info(msg)
+        server_state.log_event(msg, user_id)
+        return jsonify({"status": "skipped", "questId": quest_id})
+    return jsonify({"error": "missing questId"}), 400
 
 
 @app.route("/reset", methods=["POST"])
@@ -550,14 +716,23 @@ def heartbeat():
     if not isinstance(quests, list):
         return jsonify({"error": "quests must be an array"}), 400
 
+    skipped_from_plugin = body.get("skippedQuests")
+    if skipped_from_plugin and isinstance(skipped_from_plugin, list):
+        for sq_id in skipped_from_plugin:
+            server_state.add_skipped_quest(sq_id)
+
     server_state.set_quests(user_id, username, avatar, quests)
-    user_avatar = server_state.get_users().get(user_id, {}).get("avatar")
-    log.info(f"Heartbeat from \033[96m{username} ({user_id})\033[0m: {len(quests)} quests | Avatar: {user_avatar} (raw: {avatar!r})")
+    log.info(f"Heartbeat from \033[96m{username} ({user_id})\033[0m: {len(quests)} quests")
 
     if server_state.should_log("heartbeats"):
         server_state.log_event(f"Heartbeat synchronized ({len(quests)} quests active/queued)", user_id)
 
-    return jsonify({"status": "ok", "count": len(quests)})
+    return jsonify({
+        "status": "ok",
+        "count": len(quests),
+        "auto_complete_enabled": server_state.is_auto_complete_enabled(),
+        "skipped_quest_ids": server_state.get_skipped_quests()
+    })
 
 
 @app.route("/users", methods=["GET"])
@@ -594,6 +769,14 @@ def _watchdog_loop():
     while True:
         time.sleep(interval)
         try:
+            for app_id, proc in list(_running.items()):
+                if proc.poll() is not None:
+                    log.info(f"Stub process for app {app_id} (pid {proc.pid}) exited")
+                    del _running[app_id]
+                    server_state.set_auto_complete_enabled(False)
+                    server_state.set_active_quest(None, None, None, 0)
+                    server_state.log_event("Stub manually closed - auto complete paused")
+
             server_state.tick_heartbeat_watchdog()
             cleanup_stubs()
         except Exception as e:

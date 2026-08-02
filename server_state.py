@@ -12,10 +12,13 @@ _active_quest: dict | None = None
 _active_status_type: str | None = None
 _active_ends_at: int = 0
 
+_auto_complete_enabled: bool = True
+_skipped_quest_ids: set[str] = set()
+
 _log: deque = deque(maxlen=500)
 _log_cursor: int = 0
 
-HEARTBEAT_MISS_LIMIT = 3
+HEARTBEAT_MISS_LIMIT = 4
 
 _log_settings = {
     "heartbeats": False,
@@ -23,7 +26,8 @@ _log_settings = {
     "completion": True,
     "accounts": True,
     "stubs": True,
-    "server": False
+    "server": False,
+    "updater": True
 }
 
 _stub_cleanup_mode: str = "days"
@@ -282,6 +286,8 @@ def get_state(user_id: str | None = None) -> dict:
             "active_quest": _active_quest,
             "active_status_type": _active_status_type,
             "active_ends_at": _active_ends_at,
+            "auto_complete_enabled": _auto_complete_enabled,
+            "skipped_quest_ids": list(_skipped_quest_ids),
             "last_heartbeat": u["last_heartbeat_time"] if u else None,
             "seen_first_heartbeat": u["seen_first"] if u else False,
             "new_quest_ids": set(u["new_ids"]) if u else set(),
@@ -300,6 +306,39 @@ def set_active_quest(quest_id: str | None, quest_obj: dict | None, status_type: 
 def get_active_quest() -> tuple[str | None, dict | None]:
     with _lock:
         return _active_quest_id, _active_quest
+
+
+def set_auto_complete_enabled(enabled: bool):
+    global _auto_complete_enabled
+    with _lock:
+        _auto_complete_enabled = enabled
+
+
+def is_auto_complete_enabled() -> bool:
+    with _lock:
+        return _auto_complete_enabled
+
+
+def add_skipped_quest(quest_id: str):
+    with _lock:
+        if quest_id:
+            _skipped_quest_ids.add(quest_id)
+
+
+def remove_skipped_quest(quest_id: str):
+    with _lock:
+        _skipped_quest_ids.discard(quest_id)
+
+
+def get_skipped_quests() -> list[str]:
+    with _lock:
+        return list(_skipped_quest_ids)
+
+
+def set_skipped_quests(quest_ids: list[str]):
+    global _skipped_quest_ids
+    with _lock:
+        _skipped_quest_ids = set(quest_ids)
 
 
 def mark_first_heartbeat_seen():

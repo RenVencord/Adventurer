@@ -53,6 +53,9 @@ CDN_BASE = "https://cdn.discordapp.com"
 
 QUEST_ICON_SVG_PATH = _get_asset_path(os.path.join("assets", "quest_icon.svg"))
 BROWSE_ICON_SVG_PATH = _get_asset_path(os.path.join("assets", "browse_icon.svg"))
+START_ICON_SVG_PATH = _get_asset_path(os.path.join("assets", "start.svg"))
+STOP_ICON_SVG_PATH = _get_asset_path(os.path.join("assets", "stop.svg"))
+SKIP_ICON_SVG_PATH = _get_asset_path(os.path.join("assets", "skip_icon.svg"))
 
 PREFS_FILE = os.path.join(APPDATA_DIR, "adventurer_settings.json")
 ORB_ICON_BASE64 = ""
@@ -84,6 +87,7 @@ def load_prefs() -> dict:
         "log_completion": True,
         "log_accounts": True,
         "log_stubs": True,
+        "log_updater": True,
         "stub_cleanup_mode": "days",
         "stub_cleanup_days": 7,
         "fake_games_dir": APPDATA_DIR,
@@ -666,7 +670,7 @@ class ActiveQuestPanel(QWidget):
 
         text_col = QVBoxLayout()
         text_col.setSpacing(2)
-        self.title_lbl = QLabel("No active quest")
+        self.title_lbl = QLabel("Waiting for connection...")
         self.title_lbl.setStyleSheet(
             f"color: {ACCENT_BLUE.name()}; font-size: 15px; font-weight: 700;"
         )
@@ -680,7 +684,102 @@ class ActiveQuestPanel(QWidget):
         info_row.addLayout(text_col)
         info_row.addStretch()
 
+        ctrl_layout = QHBoxLayout()
+        ctrl_layout.setSpacing(8)
+
+        self.btn_skip = QPushButton()
+        self.btn_skip.setIcon(_load_svg_icon(SKIP_ICON_SVG_PATH, 18))
+        self.btn_skip.setIconSize(QSize(18, 18))
+        self.btn_skip.setToolTip("Skip this quest")
+        self.btn_skip.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_skip.setStyleSheet(f"""
+            QPushButton {{
+                background: {BG_CARD.name()};
+                border: 1px solid {BORDER.name()};
+                border-radius: 6px;
+                padding: 6px 10px;
+            }}
+            QPushButton:hover {{
+                background: {BG_MID.name()};
+                border: 1px solid {ACCENT_BLUE.name()};
+            }}
+        """)
+        self.btn_skip.clicked.connect(self._on_click_skip)
+
+        self.btn_stop = QPushButton()
+        self.btn_stop.setIcon(_load_svg_icon(STOP_ICON_SVG_PATH, 18))
+        self.btn_stop.setIconSize(QSize(18, 18))
+        self.btn_stop.setToolTip("Stop auto-completing quests & kill stub")
+        self.btn_stop.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_stop.setStyleSheet("""
+            QPushButton {
+                background: #da373c;
+                border: none;
+                border-radius: 6px;
+                padding: 6px 10px;
+            }
+            QPushButton:hover {
+                background: #a12828;
+            }
+        """)
+        self.btn_stop.clicked.connect(self._on_click_stop)
+
+        self.btn_start = QPushButton()
+        self.btn_start.setIcon(_load_svg_icon(START_ICON_SVG_PATH, 18))
+        self.btn_start.setIconSize(QSize(18, 18))
+        self.btn_start.setToolTip("Start auto-completing quests")
+        self.btn_start.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_start.setStyleSheet("""
+            QPushButton {
+                background: #23a55a;
+                border: none;
+                border-radius: 6px;
+                padding: 6px 10px;
+            }
+            QPushButton:hover {
+                background: #1b8045;
+            }
+        """)
+        self.btn_start.clicked.connect(self._on_click_start)
+
+        ctrl_layout.addWidget(self.btn_skip)
+        ctrl_layout.addWidget(self.btn_stop)
+        ctrl_layout.addWidget(self.btn_start)
+
+        self.btn_skip.hide()
+        self.btn_stop.hide()
+        self.btn_start.hide()
+
+        info_row.addLayout(ctrl_layout)
+
         self._root.addLayout(info_row)
+
+    def _on_click_stop(self):
+        server_state.set_auto_complete_enabled(False)
+        try:
+            req = urllib.request.Request("http://127.0.0.1:5000/stop", data=b"{}", headers={"Content-Type": "application/json"})
+            urllib.request.urlopen(req, timeout=3)
+        except Exception:
+            pass
+
+    def _on_click_start(self):
+        server_state.set_auto_complete_enabled(True)
+        try:
+            req = urllib.request.Request("http://127.0.0.1:5000/start", data=b"{}", headers={"Content-Type": "application/json"})
+            urllib.request.urlopen(req, timeout=3)
+        except Exception:
+            pass
+
+    def _on_click_skip(self):
+        if not self._current_quest_id:
+            return
+        server_state.add_skipped_quest(self._current_quest_id)
+        try:
+            body = json.dumps({"questId": self._current_quest_id}).encode("utf-8")
+            req = urllib.request.Request("http://127.0.0.1:5000/skip", data=body, headers={"Content-Type": "application/json"})
+            urllib.request.urlopen(req, timeout=3)
+        except Exception:
+            pass
 
     def _set_hero_visible(self, visible: bool):
         if visible:
@@ -690,8 +789,22 @@ class ActiveQuestPanel(QWidget):
             self.hero.hide()
             self.hero.setFixedHeight(0)
 
-    def update_quest(self, quest: dict | None, active_status_type: str | None = None, active_ends_at: int = 0):
-        if quest is None or not isinstance(quest, dict):
+    def update_quest(self, quest: dict | None, active_status_type: str | None = None, active_ends_at: int = 0, has_heartbeat: bool = False):
+        if not has_heartbeat:
+            self._set_hero_visible(False)
+            self.title_lbl.setText("Waiting for connection...")
+            self.orb_lbl.setText("")
+            self.prog_lbl.setText("")
+            self.ring.set_progress(0.0)
+            self.ring.set_pixmap(self._default_icon)
+            self._current_quest_id = None
+            self.btn_skip.hide()
+            self.btn_stop.hide()
+            self.btn_start.hide()
+            return
+
+        auto_enabled = server_state.is_auto_complete_enabled()
+        if quest is None or not isinstance(quest, dict) or not auto_enabled:
             self._set_hero_visible(False)
             self.title_lbl.setText("No active quest")
             self.orb_lbl.setText("")
@@ -699,7 +812,14 @@ class ActiveQuestPanel(QWidget):
             self.ring.set_progress(0.0)
             self.ring.set_pixmap(self._default_icon)
             self._current_quest_id = None
+            self.btn_skip.hide()
+            self.btn_stop.hide()
+            self.btn_start.show()
             return
+
+        self.btn_start.hide()
+        self.btn_skip.show()
+        self.btn_stop.show()
 
         qid = quest.get("id")
         first_load = qid != self._current_quest_id
@@ -1042,7 +1162,7 @@ class VencordManagerDialog(QDialog):
         super().__init__(parent)
         self._prefs = prefs
         self.setWindowTitle("Vencord Manager")
-        self.setFixedSize(480, 380)
+        self.setFixedWidth(480)
         self.setStyleSheet(f"""
             QDialog {{ background: {BG_DARK.name()}; color: {TEXT_PRIMARY.name()}; }}
             QLabel {{ color: {TEXT_PRIMARY.name()}; }}
@@ -1103,6 +1223,7 @@ class VencordManagerDialog(QDialog):
         self.vencord_log = QPlainTextEdit()
         self.vencord_log.setReadOnly(True)
         self.vencord_log.setStyleSheet(f"background: {BG_CARD.name()}; color: {TEXT_MUTED.name()}; font-family: monospace; font-size: 11px;")
+        self.vencord_log.hide()
         layout.addWidget(self.vencord_log)
 
         btns = QDialogButtonBox(
@@ -1112,7 +1233,13 @@ class VencordManagerDialog(QDialog):
         btns.rejected.connect(self.reject)
         layout.addWidget(btns)
 
+        self.adjustSize()
         self._build_worker = None
+
+    def _show_console(self):
+        if not self.vencord_log.isVisible():
+            self.vencord_log.show()
+            self.resize(480, 380)
 
     def _browse_vencord_dir(self):
         curr = self.txt_vencord_dir.text().strip() or os.path.expanduser("~")
@@ -1131,6 +1258,7 @@ class VencordManagerDialog(QDialog):
             QMessageBox.warning(self, "Vencord Directory Required", "Please specify the directory where Vencord is built from source.")
             return
 
+        self._show_console()
         self.vencord_log.appendPlainText("Starting Vencord sync and build...")
         self.btn_build_vencord.setEnabled(False)
         self.btn_setup_vencord.setEnabled(False)
@@ -1144,9 +1272,15 @@ class VencordManagerDialog(QDialog):
         target_dir = self.txt_vencord_dir.text().strip() or os.path.join(os.path.expanduser("~"), "Vencord")
         self.txt_vencord_dir.setText(target_dir)
 
+        self._show_console()
         self.vencord_log.appendPlainText("Starting 1-Click Full Vencord Setup...")
-        self.btn_build_vencord.setEnabled(False)
         self.btn_setup_vencord.setEnabled(False)
+        self.btn_build_vencord.setEnabled(False)
+
+        self._build_worker = vencord_helper.VencordBuildWorker(target_dir, mode="setup")
+        self._build_worker.log_signal.connect(self.vencord_log.appendPlainText)
+        self._build_worker.finished_signal.connect(self._on_worker_finished)
+        self._build_worker.start()
 
         self._build_worker = vencord_helper.VencordBuildWorker(target_dir, mode="setup")
         self._build_worker.log_signal.connect(self.vencord_log.appendPlainText)
@@ -1235,6 +1369,10 @@ class LoggingSettingsDialog(QDialog):
         self.chk_log_server.setChecked(prefs.get("log_server", False))
         form.addRow(self.chk_log_server)
 
+        self.chk_log_updater = QCheckBox("Updater events && checks")
+        self.chk_log_updater.setChecked(prefs.get("log_updater", True))
+        form.addRow(self.chk_log_updater)
+
         layout.addLayout(form)
 
         btns = QDialogButtonBox(
@@ -1252,6 +1390,7 @@ class LoggingSettingsDialog(QDialog):
         p["log_completion"] = self.chk_log_completion.isChecked()
         p["log_stubs"] = self.chk_log_stubs.isChecked()
         p["log_server"] = self.chk_log_server.isChecked()
+        p["log_updater"] = self.chk_log_updater.isChecked()
         return p
 
 
@@ -1326,6 +1465,9 @@ class UpdateCheckerThread(QThread):
 
     def run(self):
         try:
+            if server_state.should_log("updater"):
+                server_state.log_event("[Updater] Checking for updates...")
+
             upd = updater.AutoUpdater(self.prefs)
             app_update, app_ver, changelog, d_url = upd.check_app_update()
             if app_update:
@@ -1334,8 +1476,13 @@ class UpdateCheckerThread(QThread):
             plugin_update, plug_ver = upd.check_plugin_update()
             if plugin_update:
                 self.plugin_update_signal.emit(plug_ver)
+
+            if not app_update and not plugin_update:
+                if server_state.should_log("updater"):
+                    server_state.log_event("[Updater] Up to date (No updates found).")
         except Exception as e:
-            print(f"Update checker thread exception: {e}")
+            if server_state.should_log("updater"):
+                server_state.log_event(f"[Updater] Update check failed: {e}")
 
 
 class UserMenuItemWidget(QFrame):
@@ -1517,7 +1664,8 @@ class MainWindow(QMainWindow):
             "completion": self._prefs.get("log_completion", True),
             "accounts": self._prefs.get("log_accounts", True),
             "stubs": self._prefs.get("log_stubs", True),
-            "server": self._prefs.get("log_server", False)
+            "server": self._prefs.get("log_server", False),
+            "updater": self._prefs.get("log_updater", True)
         })
         server_state.set_stub_cleanup(
             self._prefs.get("stub_cleanup_mode", "days"),
@@ -1544,6 +1692,11 @@ class MainWindow(QMainWindow):
         self._start_update_checker()
         self._check_vencord_path_on_startup()
 
+        self._upd_timer = QTimer(self)
+        self._upd_timer.setInterval(3600000)
+        self._upd_timer.timeout.connect(self._start_update_checker)
+        self._upd_timer.start()
+
     def _check_vencord_path_on_startup(self):
         vencord_dir = self._prefs.get("vencord_source_dir", "").strip()
         if not vencord_dir or not os.path.exists(vencord_dir):
@@ -1553,6 +1706,8 @@ class MainWindow(QMainWindow):
 
     def _start_update_checker(self):
         if self._prefs.get("update_scope", "Any") == "None":
+            return
+        if self._upd_checker and self._upd_checker.isRunning():
             return
         self._upd_checker = UpdateCheckerThread(self._prefs)
         self._upd_checker.app_update_signal.connect(self._handle_app_update)
@@ -1830,11 +1985,12 @@ class MainWindow(QMainWindow):
                 hb_text = f"  [{username}]  Last heartbeat: {last_heartbeat}"
             self.status_lbl.setText(hb_text)
 
+            has_hb = bool(last_heartbeat)
             if active_id:
                 live = next((q for q in quests if q and isinstance(q, dict) and q.get("id") == active_id), None)
-                self.active_panel.update_quest(live or active_quest, active_status_type, active_ends_at)
+                self.active_panel.update_quest(live or active_quest, active_status_type, active_ends_at, has_heartbeat=has_hb)
             else:
-                self.active_panel.update_quest(None)
+                self.active_panel.update_quest(None, has_heartbeat=has_hb)
 
             available = self._filter_available(quests)
             total_orbs = sum(quest_orbs(q) for q in available)
@@ -1867,9 +2023,11 @@ class MainWindow(QMainWindow):
                     self._previously_incomplete.add(quest.get("id"))
 
             current_ids = [q.get("id") for q in quests if q and isinstance(q, dict)]
-            if current_ids != self._last_quest_ids or active_id != self._last_active_id:
+            skipped_ids = set(server_state.get_skipped_quests())
+            if current_ids != self._last_quest_ids or active_id != self._last_active_id or skipped_ids != getattr(self, "_last_skipped_ids", set()):
                 self._last_quest_ids = current_ids
                 self._last_active_id = active_id
+                self._last_skipped_ids = skipped_ids
                 self._rebuild_tabs(quests, active_id, active_status_type, active_ends_at)
 
             for card in self._queue_page.cards():
@@ -1892,9 +2050,12 @@ class MainWindow(QMainWindow):
         self._last_user_ids = []
 
     def _filter_available(self, quests: list[dict]) -> list[dict]:
+        skipped_ids = set(server_state.get_skipped_quests())
         result = []
         for q in quests:
             if not q or not isinstance(q, dict):
+                continue
+            if q.get("id") in skipped_ids:
                 continue
             if not is_game_quest(q):
                 continue
@@ -1918,6 +2079,8 @@ class MainWindow(QMainWindow):
         self._available_page.clear()
         self._history_page.clear()
 
+        skipped_ids = set(server_state.get_skipped_quests())
+
         queue_quests = [
             q for q in quests
             if q and isinstance(q, dict)
@@ -1925,6 +2088,7 @@ class MainWindow(QMainWindow):
                and is_enrolled(q)
                and not is_complete(q)
                and not is_expired(q)
+               and q.get("id") not in skipped_ids
         ]
 
         self.tabs.setTabText(0, f"Queue ({len(queue_quests)})" if queue_quests else "Queue")
@@ -2068,7 +2232,8 @@ class MainWindow(QMainWindow):
                 "completion": self._prefs.get("log_completion", True),
                 "accounts": self._prefs.get("log_accounts", True),
                 "stubs": self._prefs.get("log_stubs", True),
-                "server": self._prefs.get("log_server", False)
+                "server": self._prefs.get("log_server", False),
+                "updater": self._prefs.get("log_updater", True)
             })
 
     def _show_from_tray(self):

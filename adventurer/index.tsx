@@ -244,6 +244,7 @@ function getCurrentAvatarUrl(): string | null {
 }
 
 let _lastHeartbeatQuestIds: string = "";
+let _prevAutoCompleteEnabled: boolean | null = null;
 let _heartbeatFailureCount = 0;
 const SERVER_OFFLINE_ERROR = "Failed to find server — is it running?";
 
@@ -269,23 +270,59 @@ function getSkippedQuests(): string[] {
     }
 }
 
-function toggleSkipQuest(questId: string) {
+async function skipActiveQuest(questId: string) {
     let skipped = getSkippedQuests();
-    if (skipped.includes(questId)) {
-        skipped = skipped.filter(id => id !== questId);
-    } else {
+    if (!skipped.includes(questId)) {
         skipped.push(questId);
+        settings.store.skippedQuestsData = JSON.stringify(skipped);
     }
-    settings.store.skippedQuestsData = JSON.stringify(skipped);
+    document.querySelectorAll("article[id^='quest-tile-']").forEach(applySkipVisuals);
 
     if (queue.some(q => q.quest.id === questId)) {
         const idx = queue.findIndex(q => q.quest.id === questId);
         queue.splice(idx, 1);
     }
 
-    const activeQuest = getAcceptedQuests().find(q => (q?.config?.messages?.questName ?? q?.id) === _barState.activeQuestName);
-    if (activeQuest && activeQuest.id === questId) {
-        stopGame();
+    try {
+        await fetch(`${getServer()}/skip`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ questId, userId: getCurrentUserId() })
+        });
+    } catch (e) {
+        console.warn("[Adventurer] Failed to send skip command to server:", e);
+    }
+
+    if (_debugGameQuestId === questId) {
+        stopGameDebug();
+    }
+
+    running = false;
+    updateBar({ activeQuestName: null, forceKillVisible: false });
+    await processQuests();
+}
+
+function toggleSkipQuest(questId: string) {
+    let skipped = getSkippedQuests();
+    const isSkipped = skipped.includes(questId);
+    if (isSkipped) {
+        skipped = skipped.filter(id => id !== questId);
+        settings.store.skippedQuestsData = JSON.stringify(skipped);
+        if (settings.store.enableGameTracking) {
+            processQuests();
+        }
+    } else {
+        const activeQuest = getAcceptedQuests().find(q => (q?.config?.messages?.questName ?? q?.id) === _barState.activeQuestName);
+        if ((activeQuest && activeQuest.id === questId) || (running && activeQuest?.id === questId)) {
+            skipActiveQuest(questId);
+        } else {
+            skipped.push(questId);
+            settings.store.skippedQuestsData = JSON.stringify(skipped);
+            if (queue.some(q => q.quest.id === questId)) {
+                const idx = queue.findIndex(q => q.quest.id === questId);
+                queue.splice(idx, 1);
+            }
+        }
     }
 }
 
@@ -322,9 +359,9 @@ function showFallbackModal(appId: string, fallbackExe: string): Promise<"try" | 
         overlay.appendChild(modal);
 
         const injectTarget = document.querySelector("div[class^='app_']")
-                          || document.querySelector("div[class^='layerContainer_']")
-                          || document.getElementById("app-mount")
-                          || document.body;
+            || document.querySelector("div[class^='layerContainer_']")
+            || document.getElementById("app-mount")
+            || document.body;
 
         injectTarget.appendChild(overlay);
 
@@ -535,7 +572,7 @@ function startUIObserver() {
         setTimeout(() => {
             if (location.pathname.includes("/quest-home") && settings.store.barHidden) {
                 settings.store.barHidden = false;
-                try { findStoreLazy("QuestStore")?.emitChange?.(); } catch (e) {}
+                try { findStoreLazy("QuestStore")?.emitChange?.(); } catch (e) { }
                 FluxDispatcher.dispatch({ type: "QUEST_UPDATE" });
             }
         }, 50);
@@ -585,7 +622,7 @@ async function reportActiveStatus(questId: string | null, quest: any | null, sta
                 userId: getCurrentUserId()
             })
         });
-    } catch {}
+    } catch { }
 }
 
 async function sendHeartbeat(force = false) {
@@ -614,11 +651,44 @@ async function sendHeartbeat(force = false) {
                 quests: all,
                 userId: getCurrentUserId(),
                 username: getCurrentUsername(),
-                avatar: getCurrentAvatarUrl()
+                avatar: getCurrentAvatarUrl(),
+                skippedQuests: getSkippedQuests()
             })
         });
 
         if (res.ok) {
+            const data = await res.json().catch(() => null);
+            if (data?.auto_complete_enabled === false && running) {
+                running = false;
+                queue.length = 0;
+                stopGame();
+                updateBar({ activeQuestName: null, forceKillVisible: false });
+            } else if (data?.auto_complete_enabled === true) {
+                if (_prevAutoCompleteEnabled === false || (!running && queue.length === 0)) {
+                    processQuests();
+                }
+            }
+            _prevAutoCompleteEnabled = data?.auto_complete_enabled ?? null;
+            if (data?.skipped_quest_ids && Array.isArray(data.skipped_quest_ids)) {
+                let currentSkipped = getSkippedQuests();
+                let changed = false;
+                for (const sqId of data.skipped_quest_ids) {
+                    if (!currentSkipped.includes(sqId)) {
+                        currentSkipped.push(sqId);
+                        changed = true;
+                    }
+                }
+                if (changed) {
+                    settings.store.skippedQuestsData = JSON.stringify(currentSkipped);
+                    document.querySelectorAll("article[id^='quest-tile-']").forEach(applySkipVisuals);
+                    const activeQ = getAcceptedQuests().find(q => (q?.config?.messages?.questName ?? q?.id) === _barState.activeQuestName);
+                    if (activeQ && currentSkipped.includes(activeQ.id) && running) {
+                        running = false;
+                        updateBar({ activeQuestName: null, forceKillVisible: false });
+                        processQuests();
+                    }
+                }
+            }
             const reconnected = !_serverOnline;
             _serverOnline = true;
             _heartbeatFailureCount = 0;
@@ -1228,7 +1298,7 @@ function pushOverlayState() {
 
     // Also refresh what gets baked into future frame loads.
     if (Native) {
-        Native.setOverlayScript(buildOverlayScript()).catch(() => {});
+        Native.setOverlayScript(buildOverlayScript()).catch(() => { });
     }
 }
 
@@ -1247,9 +1317,8 @@ function stopGameDebug() {
 }
 
 async function launchGameDebug(quest: any, forceExe?: string): Promise<boolean> {
-    const appId = quest?.config?.application?.id
-        ?? quest?.config?.taskConfigV2?.tasks?.["PLAY_ON_DESKTOP"]?.applications?.[0]?.id;
-    const appName = quest?.config?.application?.name ?? quest?.config?.messages?.gameTitle ?? appId;
+    const appId = getQuestAppId(quest);
+    const appName = quest?.config?.application?.name ?? quest?.config?.messages?.gameTitle ?? quest?.config?.messages?.questName ?? appId;
 
     let exeName = `${appName}.exe`;
     let needsPrompt = false;
@@ -1393,7 +1462,7 @@ async function launchGame(appId: string, quest: any, forceExe?: string): Promise
 
             if (!res.ok) {
                 let data: any;
-                try { data = await res.json(); } catch {}
+                try { data = await res.json(); } catch { }
 
                 if (data?.requires_confirmation && data.fallback_exe) {
                     const choice = await showFallbackModal(appId, data.fallback_exe);
@@ -1496,6 +1565,8 @@ async function waitForCompletion(quest: any, taskKey: string, target: number, qu
                 id: Toasts.genId(),
                 options: { duration: 4000 }
             });
+            running = false;
+            queue.length = 0;
             await stopGame();
             return false;
         }
@@ -1544,6 +1615,8 @@ async function waitForCompletion(quest: any, taskKey: string, target: number, qu
                 id: Toasts.genId(),
                 options: { duration: 4000 }
             });
+            running = false;
+            queue.length = 0;
             await stopGame(questName);
             return false;
         }
@@ -1596,7 +1669,7 @@ async function runQueue() {
 
     console.log(`[Adventurer] runQueue: starting with ${queue.length} items`);
 
-    while (queue.length > 0) {
+    while (queue.length > 0 && running) {
         const current = queue.shift();
         if (!current) continue;
 
@@ -1609,17 +1682,9 @@ async function runQueue() {
             tryPatchNow();
 
             if (!patchedVideo) {
-                Toasts.show({
-                    message: `"${questName}": open the quest panel and start the video first`,
-                    type: Toasts.Type.FAILURE,
-                    id: Toasts.genId(),
-                    options: { duration: 5000 }
-                });
-                queue.length = 0;
-                for (const q of getAcceptedQuests()) {
-                    if (q?.id) seen.add(q.id);
-                }
-                break;
+                console.log(`[Adventurer] runQueue: video player not active for "${questName}", skipping to next quest`);
+                seen.delete(quest.id);
+                continue;
             }
 
             Toasts.show({
@@ -1631,11 +1696,9 @@ async function runQueue() {
 
             const completed = await waitForCompletion(quest, task.key, task.target, questName, appId, task.isVideo);
             if (!completed) {
-                queue.length = 0;
-                for (const q of getAcceptedQuests()) {
-                    if (q?.id) seen.add(q.id);
-                }
-                break;
+                console.log(`[Adventurer] runQueue: video quest "${questName}" was not completed`);
+                if (!running) break;
+                continue;
             }
 
         } else {
@@ -1645,13 +1708,10 @@ async function runQueue() {
             const ok = await launchGame(appId, quest);
             console.log(`[Adventurer] runQueue: launchGame returned ${ok} for ${questName}`);
             if (!ok) {
-                queue.length = 0;
-                if (_serverOnline) {
-                    for (const q of getAcceptedQuests()) {
-                        if (q?.id) seen.add(q.id);
-                    }
-                }
-                break;
+                console.log(`[Adventurer] runQueue: launchGame failed for "${questName}", skipping to next quest`);
+                seen.delete(quest.id);
+                if (!running) break;
+                continue;
             }
 
             Toasts.show({
@@ -1663,11 +1723,9 @@ async function runQueue() {
 
             const completed = await waitForCompletion(quest, task.key, task.target, questName, appId, task.isVideo);
             if (!completed) {
-                queue.length = 0;
-                for (const q of getAcceptedQuests()) {
-                    if (q?.id) seen.add(q.id);
-                }
-                break;
+                console.log(`[Adventurer] runQueue: quest "${questName}" was not completed`);
+                if (!running) break;
+                continue;
             }
         }
 
@@ -1693,17 +1751,86 @@ function isQuestComplete(quest: any): boolean {
     return !!quest?.userStatus?.completedAt;
 }
 
-function getQuestTask(quest: any): { key: string; target: number; isVideo: boolean } | null {
+export const enum QuestType {
+    VIDEO = "VIDEO",
+    EXPERIENCE = "EXPERIENCE",
+    GAME = "GAME"
+}
+
+function getQuestAppId(quest: any, task?: any): string | null {
+    return quest?.config?.application?.id
+        ?? quest?.resolvedAppId
+        ?? quest?.config?.taskConfigV2?.tasks?.["PLAY_ON_DESKTOP"]?.applications?.[0]?.id
+        ?? quest?.config?.taskConfigV2?.tasks?.["STREAM_ON_DESKTOP"]?.applications?.[0]?.id
+        ?? task?.applicationId
+        ?? quest?.application_id
+        ?? null;
+}
+
+function getQuestType(quest: any): QuestType {
+    const tasks = quest?.config?.taskConfigV2?.tasks ?? {};
+
+    if (tasks["WATCH_VIDEO"]) {
+        return QuestType.VIDEO;
+    }
+
+    if (
+        tasks["PLAY_EXPERIENCE"] ||
+        tasks["LAUNCH_EXPERIENCE"] ||
+        tasks["PLAY_ACTIVITY"] ||
+        tasks["PLAY_ON_MOBILE"] ||
+        tasks["MOBILE"]
+    ) {
+        return QuestType.EXPERIENCE;
+    }
+
+    const hasDesktopTask = !!(tasks["PLAY_ON_DESKTOP"] || tasks["STREAM_ON_DESKTOP"]);
+    const appId = getQuestAppId(quest);
+
+    if (hasDesktopTask && appId) {
+        return QuestType.GAME;
+    }
+
+    return QuestType.EXPERIENCE;
+}
+
+function getQuestTask(quest: any): { key: string; target: number; isVideo: boolean; type: QuestType; applicationId?: string } | null {
     const tasks = quest?.config?.taskConfigV2?.tasks;
     if (!tasks) return null;
 
-    if (tasks["WATCH_VIDEO"]) {
-        return { key: "WATCH_VIDEO", target: tasks["WATCH_VIDEO"].target ?? 0, isVideo: true };
+    const type = getQuestType(quest);
+
+    if (type === QuestType.VIDEO && tasks["WATCH_VIDEO"]) {
+        return {
+            key: "WATCH_VIDEO",
+            target: tasks["WATCH_VIDEO"].target ?? 0,
+            isVideo: true,
+            type: QuestType.VIDEO
+        };
     }
-    if (tasks["PLAY_ON_DESKTOP"]) {
-        return { key: "PLAY_ON_DESKTOP", target: tasks["PLAY_ON_DESKTOP"].target ?? 0, isVideo: false };
+
+    if (type === QuestType.GAME) {
+        const desktopTask = tasks["PLAY_ON_DESKTOP"] ?? tasks["STREAM_ON_DESKTOP"];
+        if (desktopTask) {
+            const appId = getQuestAppId(quest);
+            return {
+                key: desktopTask.type ?? "PLAY_ON_DESKTOP",
+                target: desktopTask.target ?? 0,
+                isVideo: false,
+                type: QuestType.GAME,
+                applicationId: appId ?? undefined
+            };
+        }
     }
-    return null;
+
+    const expKey = Object.keys(tasks)[0];
+    const expTask = tasks[expKey];
+    return {
+        key: expKey ?? "EXPERIENCE",
+        target: expTask?.target ?? 0,
+        isVideo: false,
+        type: QuestType.EXPERIENCE
+    };
 }
 
 function checkForNewQuests() {
@@ -1807,29 +1934,29 @@ async function processQuests(): Promise<void> {
 
 
     for (const quest of accepted) {
-        // Try multiple locations for the application ID
-        const appId = quest?.config?.application?.id
-            ?? quest?.config?.taskConfigV2?.tasks?.["PLAY_ON_DESKTOP"]?.applications?.[0]?.id
-            ?? quest?.config?.taskConfigV2?.tasks?.["WATCH_VIDEO"]?.applications?.[0]?.id
-            ?? quest?.application_id
-            ?? quest?.config?.id;
+        const task = getQuestTask(quest);
         const questName = quest?.config?.messages?.questName ?? quest?.id;
 
         if (isQuestComplete(quest)) { console.log(`[Adventurer] SKIP ${questName}: already complete`); continue; }
         if (seen.has(quest.id)) { console.log(`[Adventurer] SKIP ${questName}: already seen`); continue; }
         if (skippedIds.includes(quest.id)) { console.log(`[Adventurer] SKIP ${questName}: user skipped`); continue; }
+        if (!task) { console.log(`[Adventurer] SKIP ${questName}: no task found`); continue; }
 
-        const task = getQuestTask(quest);
-        if (!task) { console.log(`[Adventurer] SKIP ${questName}: no task (no WATCH_VIDEO or PLAY_ON_DESKTOP)`); continue; }
-
-        if (task.isVideo === false && !settings.store.enableGameTracking) { console.log(`[Adventurer] SKIP ${questName}: game tracking disabled`); continue; }
-
-        if (!appId) {
-            console.warn(`[Adventurer] QUEUED (no appId): ${questName} - server will attempt to resolve from quest payload`);
-        } else {
-            console.log(`[Adventurer] QUEUED: ${questName} (appId=${appId}, isVideo=${task.isVideo})`);
+        if (task.type !== QuestType.GAME) {
+            console.log(`[Adventurer] SKIP ${questName}: non-game quest (type=${task.type}) - client handled`);
+            continue;
         }
-        queue.push({ quest, appId: appId ?? quest?.id, questName, task });
+
+        const appId = getQuestAppId(quest, task);
+        if (!appId) {
+            console.log(`[Adventurer] SKIP ${questName}: missing valid desktop appId`);
+            continue;
+        }
+
+        if (!settings.store.enableGameTracking) { console.log(`[Adventurer] SKIP ${questName}: game tracking disabled`); continue; }
+
+        console.log(`[Adventurer] QUEUED GAME QUEST: ${questName} (appId=${appId})`);
+        queue.push({ quest, appId, questName, task });
         seen.add(quest.id);
     }
 
@@ -1864,7 +1991,7 @@ async function fetchAndProcess() {
                     await RestAPI.post({
                         url: `/quests/${q.id}/reward-code`,
                         body: { platform: 0, location: 11 }
-                    }).catch(() => {});
+                    }).catch(() => { });
                 }
             }
             await sleep(800);
@@ -1875,7 +2002,7 @@ async function fetchAndProcess() {
         (q?.userStatus === null || q?.userStatus === undefined) &&
         !isQuestExpired(q) &&
         !skippedIds.includes(q.id) &&
-        (q?.config?.taskConfigV2?.tasks?.["PLAY_ON_DESKTOP"] || q?.config?.taskConfigV2?.tasks?.["WATCH_VIDEO"])
+        getQuestTask(q) !== null
     );
 
     if (unenrolled.length > 0) {
@@ -2104,6 +2231,17 @@ function ThreeDotMenu({ open, setOpen }: { open: boolean, setOpen: (v: boolean) 
                         <>
                             <div style={{ height: "1px", backgroundColor: "var(--background-modifier-accent)", margin: "4px 0" }}></div>
                             <DropdownItem
+                                label="Skip quest"
+                                onClick={() => {
+                                    const activeQ = getAcceptedQuests().find(q => (q?.config?.messages?.questName ?? q?.id) === _barState.activeQuestName);
+                                    if (activeQ) {
+                                        toggleSkipQuest(activeQ.id);
+                                        document.querySelectorAll("article[id^='quest-tile-']").forEach(applySkipVisuals);
+                                    }
+                                    setOpen(false);
+                                }}
+                            />
+                            <DropdownItem
                                 label="Kill game stub"
                                 danger={true}
                                 onClick={() => {
@@ -2120,7 +2258,7 @@ function ThreeDotMenu({ open, setOpen }: { open: boolean, setOpen: (v: boolean) 
                             settings.store.barHidden = true;
                             setOpen(false);
                             if (_barUpdate) _barUpdate();
-                            try { findStoreLazy("QuestStore")?.emitChange?.(); } catch (e) {}
+                            try { findStoreLazy("QuestStore")?.emitChange?.(); } catch (e) { }
                             FluxDispatcher.dispatch({ type: "QUEST_UPDATE" });
                         }}
                     />
@@ -2139,18 +2277,20 @@ export default definePlugin({
     shouldShowBar(quest: any) {
         if (settings.store.barHidden) return false;
 
+        if (running || _barState.activeQuestName !== null) return true;
+
         const claimable = getAllQuests().some(q => isQuestClaimable(q));
         if (claimable) return true;
 
         const skippedIds = getSkippedQuests();
-        const gameQuestCount = getAllQuests().filter(q =>
-            q?.config?.taskConfigV2?.tasks?.["PLAY_ON_DESKTOP"] &&
-            !isQuestExpired(q) &&
+        const availableCount = getAllQuests().filter(q =>
+            q && q.id &&
             !q?.userStatus?.completedAt &&
+            !isQuestExpired(q) &&
             !skippedIds.includes(q.id)
         ).length;
 
-        return gameQuestCount > 0;
+        return availableCount > 0;
     },
 
     patches: [
@@ -2337,7 +2477,7 @@ export default definePlugin({
 
         const skippedIds = getSkippedQuests();
         const gameQuestCount = getAllQuests().filter(q =>
-            q?.config?.taskConfigV2?.tasks?.["PLAY_ON_DESKTOP"] &&
+            getQuestType(q) === QuestType.GAME &&
             !isQuestExpired(q) &&
             !q?.userStatus?.completedAt &&
             !skippedIds.includes(q.id)
@@ -2387,7 +2527,7 @@ export default definePlugin({
                 }
             })();
 
-            await Promise.all([claimPromise.catch(() => {}), sleep(800)]);
+            await Promise.all([claimPromise.catch(() => { }), sleep(800)]);
 
             if (resultSuccess) {
                 Toasts.show({
@@ -2596,7 +2736,7 @@ export default definePlugin({
             console.log("[Adventurer] Heartbeat tick");
             if (location.pathname.includes("/quest-home") && settings.store.barHidden) {
                 settings.store.barHidden = false;
-                try { findStoreLazy("QuestStore")?.emitChange?.(); } catch (e) {}
+                try { findStoreLazy("QuestStore")?.emitChange?.(); } catch (e) { }
                 FluxDispatcher.dispatch({ type: "QUEST_UPDATE" });
             }
 
@@ -2609,7 +2749,7 @@ export default definePlugin({
             if (isOnline) {
                 processQuests();
             }
-        }, 15000);
+        }, 3000);
     },
 
     stop() {

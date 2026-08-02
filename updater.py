@@ -4,9 +4,26 @@ import json
 import subprocess
 import urllib.request
 import urllib.error
+import server_state
 
-APP_VERSION = "1.0.0"
-PLUGIN_VERSION = "1.0.0"
+def _log(msg: str):
+    if server_state.should_log("updater"):
+        server_state.log_event(f"[Updater] {msg}")
+
+def _get_local_version_info() -> tuple[str, str]:
+    manifest_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "version_manifest.json")
+    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+        manifest_path = os.path.join(sys._MEIPASS, "version_manifest.json")
+    if os.path.exists(manifest_path):
+        try:
+            with open(manifest_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                return data.get("app_version", "1.0.0"), data.get("plugin_version", "1.0.0")
+        except Exception:
+            pass
+    return "1.0.0", "1.0.0"
+
+APP_VERSION, PLUGIN_VERSION = _get_local_version_info()
 REPO_OWNER = "RenVencord"
 REPO_NAME = "Adventurer"
 
@@ -80,9 +97,10 @@ class AutoUpdater:
                                 self.app_download_url = asset.get("browser_download_url", "")
                                 break
 
+                        _log(f"App update available: {tag}")
                         return True, self.latest_app_version, self.app_changelog, self.app_download_url
         except Exception as e:
-            print(f"App update check failed: {e}")
+            _log(f"App update check failed: {e}")
         return False, "", "", ""
 
     def check_plugin_update(self) -> tuple[bool, str]:
@@ -102,9 +120,10 @@ class AutoUpdater:
 
                     if is_version_newer(PLUGIN_VERSION, remote_plugin_ver, scope):
                         self.latest_plugin_version = remote_plugin_ver
+                        _log(f"Plugin update available: {remote_plugin_ver}")
                         return True, remote_plugin_ver
         except Exception as e:
-            print(f"Plugin update check failed: {e}")
+            _log(f"Plugin update check failed: {e}")
         return False, ""
 
     def download_app_update(self, download_url: str = None) -> bool:
@@ -112,12 +131,17 @@ class AutoUpdater:
         if not url:
             return False
 
+        if not getattr(sys, "frozen", False):
+            _log("Skipping executable swap (running from python source).")
+            return False
+
         current_exe = sys.executable
-        if not current_exe.endswith(".exe"):
+        if not current_exe.lower().endswith(".exe") or "python" in os.path.basename(current_exe).lower():
             return False
 
         new_exe_tmp = current_exe + ".new"
         try:
+            _log(f"Downloading app update executable...")
             req = urllib.request.Request(url, headers={"User-Agent": "Adventurer-Updater"})
             with urllib.request.urlopen(req, timeout=60) as resp, open(new_exe_tmp, "wb") as f:
                 while True:
@@ -126,10 +150,11 @@ class AutoUpdater:
                         break
                     f.write(chunk)
 
+            _log("Download complete. Triggering background executable swap...")
             self._trigger_exe_swap(current_exe, new_exe_tmp)
             return True
         except Exception as e:
-            print(f"Download app update failed: {e}")
+            _log(f"Download app update failed: {e}")
             if os.path.exists(new_exe_tmp):
                 try:
                     os.remove(new_exe_tmp)
@@ -144,7 +169,7 @@ class AutoUpdater:
                 if resp.status == 200:
                     return resp.read().decode("utf-8")
         except Exception as e:
-            print(f"Fetch plugin code failed: {e}")
+            _log(f"Fetch plugin code failed: {e}")
         return None
 
     def _trigger_exe_swap(self, current_exe: str, new_exe: str):
