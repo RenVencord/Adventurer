@@ -5,6 +5,12 @@ import { findStoreLazy, findByProps } from "@webpack";
 import { Toasts, Button } from "@webpack/common";
 import { showNotification } from "@api/Notifications";
 
+import { buildCompletionMessage, buildCompletionScript, type CompletionQuestStatus } from "./experiences/completion";
+import { buildGraphScript } from "./experiences/graph";
+import { buildMinimapMessage, buildMinimapScript } from "./experiences/minimap";
+import bundledRecipes from "./experiences/recipes.json";
+import { buildVolumeScript, pushVolume, VolumeControl } from "./experiences/volume";
+
 const QuestStore = findStoreLazy("QuestStore");
 const RunningGameStore = findStoreLazy("RunningGameStore");
 
@@ -164,10 +170,7 @@ const settings = definePluginSettings({
         type: OptionType.BOOLEAN,
         description: "In interactive (puzzle/find-item) game quests, highlight interactable objects and trigger all of their functions with one click",
         default: true,
-        onChange(value: boolean) {
-            if (value) startGameOverlay();
-            else stopGameOverlay();
-        }
+        onChange() { refreshInjectedScripts(); }
     },
     experiencesPrimaryColor: {
         type: OptionType.STRING,
@@ -189,6 +192,59 @@ const settings = definePluginSettings({
         default: "#ffff00",
         hidden: () => !settings.store.experiencesHack,
         onChange() { pushOverlayState(); }
+    },
+    experiencesMinimap: {
+        type: OptionType.BOOLEAN,
+        description: "In activities with camera points of interest, show a minimap of the rooms and POIs. Click a POI to travel there through the game's own navigation (locked POIs stay locked)",
+        default: true,
+        onChange() { refreshInjectedScripts(); }
+    },
+    experiencesMinimapSize: {
+        type: OptionType.NUMBER,
+        description: "Minimap size in pixels (120 to 640)",
+        default: 220,
+        hidden: () => !settings.store.experiencesMinimap,
+        onChange() { pushMinimap(); }
+    },
+    experiencesMinimapPosition: {
+        type: OptionType.SELECT,
+        description: "Minimap corner",
+        hidden: () => !settings.store.experiencesMinimap,
+        options: [
+            { label: "Top left", value: "tl" },
+            { label: "Top right", value: "tr", default: true },
+            { label: "Bottom left", value: "bl" },
+            { label: "Bottom right", value: "br" }
+        ],
+        onChange() { pushMinimap(); }
+    },
+    experiencesVolumeControl: {
+        type: OptionType.BOOLEAN,
+        description: "Add a volume slider and mute button for quest activities to the quest bar inside the activity",
+        default: true,
+        onChange() { refreshInjectedScripts(); }
+    },
+    experiencesVolume: {
+        type: OptionType.SLIDER,
+        description: "Quest activity volume (%)",
+        markers: [0, 25, 50, 75, 100],
+        stickToMarkers: false,
+        default: 100,
+        hidden: () => !settings.store.experiencesVolumeControl,
+        onChange() { applyVolume(); }
+    },
+    experiencesMuted: {
+        type: OptionType.BOOLEAN,
+        description: "Mute quest activities",
+        default: false,
+        hidden: () => !settings.store.experiencesVolumeControl,
+        onChange() { applyVolume(); }
+    },
+    experiencesAutoComplete: {
+        type: OptionType.BOOLEAN,
+        description: "In quest activities with a known recipe (like VALORANT Aces), or one guessed from the activity's scripts when none is known, complete the quest with your first click on Play or the first target, without touching the leaderboard",
+        default: true,
+        onChange() { refreshInjectedScripts(); }
     },
     notifyNewQuests: {
         type: OptionType.BOOLEAN,
@@ -248,9 +304,37 @@ let _prevAutoCompleteEnabled: boolean | null = null;
 let _heartbeatFailureCount = 0;
 const SERVER_OFFLINE_ERROR = "Failed to find server — is it running?";
 
+function normalizeQuest(q: any): boolean {
+    if (!q?.config?.taskConfigV2?.tasks) return false;
+    const tasks = q.config.taskConfigV2.tasks;
+    if (tasks["WATCH_VIDEO_ON_MOBILE"] && !tasks["WATCH_VIDEO"]) {
+        tasks["WATCH_VIDEO"] = {
+            ...tasks["WATCH_VIDEO_ON_MOBILE"],
+            type: "WATCH_VIDEO"
+        };
+        return true;
+    }
+    return false;
+}
+
+function normalizeAllQuests(): boolean {
+    const quests: Map<string, any> = QuestStore?.quests;
+    if (!quests) return false;
+    let changed = false;
+    for (const q of quests.values()) {
+        if (normalizeQuest(q)) {
+            changed = true;
+        }
+    }
+    return changed;
+}
+
 function getAllQuests(): any[] {
     const quests: Map<string, any> = QuestStore?.quests;
     if (!quests) return [];
+    if (normalizeAllQuests()) {
+        try { QuestStore?.emitChange?.(); } catch (e) { }
+    }
     return [...quests.values()];
 }
 
@@ -570,10 +654,15 @@ function startUIObserver() {
         }
 
         setTimeout(() => {
-            if (location.pathname.includes("/quest-home") && settings.store.barHidden) {
-                settings.store.barHidden = false;
-                try { findStoreLazy("QuestStore")?.emitChange?.(); } catch (e) { }
-                FluxDispatcher.dispatch({ type: "QUEST_UPDATE" });
+            if (location.pathname.includes("/quest-home")) {
+                if (normalizeAllQuests()) {
+                    try { findStoreLazy("QuestStore")?.emitChange?.(); } catch (e) { }
+                }
+                if (settings.store.barHidden) {
+                    settings.store.barHidden = false;
+                    try { findStoreLazy("QuestStore")?.emitChange?.(); } catch (e) { }
+                    FluxDispatcher.dispatch({ type: "QUEST_UPDATE" });
+                }
             }
         }, 50);
 
@@ -661,7 +750,7 @@ async function sendHeartbeat(force = false) {
             if (data?.auto_complete_enabled === false && running) {
                 running = false;
                 queue.length = 0;
-                stopGame();
+                stopGame(undefined, false);
                 updateBar({ activeQuestName: null, forceKillVisible: false });
             } else if (data?.auto_complete_enabled === true) {
                 if (_prevAutoCompleteEnabled === false || (!running && queue.length === 0)) {
@@ -742,9 +831,10 @@ let videoObserver: MutationObserver | null = null;
 
 function getVideoQuestDurations(): Array<{ min: number; max: number }> {
     return getAcceptedQuests()
-        .filter(q => q?.config?.taskConfigV2?.tasks?.["WATCH_VIDEO"])
+        .filter(q => q?.config?.taskConfigV2?.tasks?.["WATCH_VIDEO"] || q?.config?.taskConfigV2?.tasks?.["WATCH_VIDEO_ON_MOBILE"])
         .map(q => {
-            const target = q.config.taskConfigV2.tasks["WATCH_VIDEO"].target ?? 0;
+            const task = q.config.taskConfigV2.tasks["WATCH_VIDEO"] ?? q.config.taskConfigV2.tasks["WATCH_VIDEO_ON_MOBILE"];
+            const target = task?.target ?? 0;
             return { min: Math.max(0, target - 2), max: target + 2 };
         });
 }
@@ -763,7 +853,8 @@ function findByQuestId(): HTMLVideoElement | null {
     const quest = getAcceptedQuests().find(q => q.id === questId);
     if (!quest) return null;
 
-    const target = quest?.config?.taskConfigV2?.tasks?.["WATCH_VIDEO"]?.target;
+    const target = quest?.config?.taskConfigV2?.tasks?.["WATCH_VIDEO"]?.target
+        ?? quest?.config?.taskConfigV2?.tasks?.["WATCH_VIDEO_ON_MOBILE"]?.target;
     if (!target) return null;
 
     const min = Math.max(0, target - 2);
@@ -1069,6 +1160,19 @@ function buildOverlayScript(): string {
             if (matchesActiveQuestScope) highSignalCount++;
         });
 
+        // When the scene graph (graph.ts) found a quest manager, its objectives are exact: they replace the keyword guess.
+        const graph = window.__adventurerGraph;
+        let graphState = null;
+        try { graphState = graph && graph.state(); } catch (e) {}
+        if (graphState && graphState.ok && graphState.hasQuestManager && graphState.objectiveGuids.length) {
+            relevantCandidates.forEach(entity => {
+                let objective = false;
+                try { objective = !!graph.isObjective(entity); } catch (e) {}
+                entity.isHighSignal = objective;
+            });
+            return relevantCandidates;
+        }
+
         if (highSignalCount === 0) {
             relevantCandidates.forEach(entity => { entity.isHighSignal = true; });
         }
@@ -1251,17 +1355,167 @@ function buildOverlayScript(): string {
 
 // Asks the main process to inject (and auto-reinject on future frame loads)
 // the overlay script into any discordsays.com quest frame under this window.
+// Everything that gets injected into a quest frame: the volume control, the ESP overlay, the minimap and the quest
+// completion runner (each when enabled). Each part is an idempotent IIFE, so they can simply be concatenated.
+function buildInjectedScript(): string {
+    const parts: string[] = [];
+    if (settings.store.experiencesVolumeControl) {
+        parts.push(buildVolumeScript(settings.store.experiencesVolume, settings.store.experiencesMuted));
+    }
+    // The event graph serves the overlay and the completion runner (guessed recipes), so either one needs it. It is
+    // pushed once, before both, and is idempotent in the frame.
+    if (settings.store.experiencesHack || settings.store.experiencesAutoComplete) parts.push(buildGraphScript());
+    if (settings.store.experiencesHack) parts.push(buildOverlayScript());
+    if (settings.store.experiencesMinimap) parts.push(buildMinimapScript(minimapOptions()));
+    // The runner gets the bundled recipes and the quest status. native.ts fills in the local (Workbench) profiles.
+    if (settings.store.experiencesAutoComplete) {
+        parts.push(buildCompletionScript({ recipes: bundledRecipes, quests: completionQuests() }));
+    }
+    return parts.join("\n;\n");
+}
+
+// Every application id a quest can be played in: config.application.id plus the applications of each of its tasks
+// (an activity quest lists its activity there).
+function questApplicationIds(quest: any): string[] {
+    const ids = new Set<string>();
+    const add = (id: unknown) => {
+        if (id !== null && id !== undefined && /^\d+$/.test(String(id))) ids.add(String(id));
+    };
+    add(quest?.config?.application?.id);
+    add(getQuestAppId(quest));
+    for (const task of Object.values<any>(quest?.config?.taskConfigV2?.tasks ?? {})) {
+        for (const application of task?.applications ?? []) add(application?.id);
+    }
+    return [...ids];
+}
+
+// Quest status per application id for the in-frame completion runner. Expired quests are left out. When several quests
+// share an application the enrolled and unfinished one wins, then a completed one.
+function computeCompletionQuests(): Record<string, CompletionQuestStatus> {
+    const rank = (s: CompletionQuestStatus) => s.enrolled && !s.completed ? 2 : s.completed ? 1 : 0;
+    const result: Record<string, CompletionQuestStatus> = {};
+    for (const quest of getAllQuests()) {
+        if (!quest?.id || isQuestExpired(quest)) continue;
+        const status: CompletionQuestStatus = {
+            questId: String(quest.id),
+            name: String(quest.config?.messages?.questName ?? quest.id),
+            enrolled: quest.userStatus !== null && quest.userStatus !== undefined,
+            completed: isQuestComplete(quest)
+        };
+        for (const appId of questApplicationIds(quest)) {
+            const known = result[appId];
+            if (!known || rank(status) > rank(known)) result[appId] = status;
+        }
+    }
+    return result;
+}
+
+const questSignature = (quests: Record<string, CompletionQuestStatus>) =>
+    JSON.stringify(Object.entries(quests).sort(([a], [b]) => a.localeCompare(b)));
+
+// The quest status the injected script was last built with, so quest events only re-inject when something changed.
+let _completionQuestSig = "";
+
+function completionQuests(): Record<string, CompletionQuestStatus> {
+    const quests = computeCompletionQuests();
+    _completionQuestSig = questSignature(quests);
+    return quests;
+}
+
+// Quest events after which the enrolled / completed state of a quest can differ.
+const QUEST_SYNC_EVENTS = [
+    "QUESTS_FETCH_CURRENT_QUESTS_SUCCESS",
+    "QUESTS_ENROLL_SUCCESS",
+    "QUESTS_SEND_HEARTBEAT_SUCCESS",
+    "QUESTS_USER_STATUS_UPDATE",
+    "QUESTS_USER_COMPLETION_UPDATE"
+];
+
+let _questSyncTimer: ReturnType<typeof setTimeout> | null = null;
+
+// QuestStore handles the same events, so wait a moment for it to hold the new data before reading it.
+function scheduleQuestSync() {
+    if (_questSyncTimer) return;
+    _questSyncTimer = setTimeout(() => {
+        _questSyncTimer = null;
+        if (normalizeAllQuests()) {
+            try { findStoreLazy("QuestStore")?.emitChange?.(); } catch (e) { }
+        }
+        syncCompletionQuests();
+    }, 300);
+}
+
+function syncCompletionQuests() {
+    if (!settings.store.experiencesAutoComplete) return;
+    if (questSignature(computeCompletionQuests()) === _completionQuestSig) return;
+    refreshInjectedScripts();
+}
+
+// Switches the completion runner of the frames that are already running on or off.
+function pushCompletion() {
+    const message = buildCompletionMessage(!!settings.store.experiencesAutoComplete);
+    document.querySelectorAll("iframe").forEach(frame => {
+        try {
+            if (!/(^|\.)discordsays\.com$/i.test(new URL((frame as HTMLIFrameElement).src).hostname)) return;
+            (frame as HTMLIFrameElement).contentWindow?.postMessage(message, "*");
+        } catch {
+            // Not a URL we can parse or a frame that is gone: nothing to update.
+        }
+    });
+}
+
+function minimapOptions() {
+    return {
+        enabled: !!settings.store.experiencesMinimap,
+        size: settings.store.experiencesMinimapSize,
+        position: settings.store.experiencesMinimapPosition as "tl" | "tr" | "bl" | "br"
+    };
+}
+
+// Live-updates the minimap of frames that are already running and refreshes what future frames start with.
+function pushMinimap() {
+    const message = buildMinimapMessage(minimapOptions());
+    document.querySelectorAll("iframe").forEach(frame => {
+        try {
+            if (!/(^|\.)discordsays\.com$/i.test(new URL((frame as HTMLIFrameElement).src).hostname)) return;
+            (frame as HTMLIFrameElement).contentWindow?.postMessage(message, "*");
+        } catch {
+            // Not a URL we can parse or a frame that is gone: nothing to update.
+        }
+    });
+    if (Native && buildInjectedScript()) Native.setOverlayScript(buildInjectedScript()).catch(() => { });
+}
+
 async function startGameOverlay() {
-    if (!settings.store.experiencesHack) return;
+    const script = buildInjectedScript();
+    if (!script) return;
     if (!Native) {
         console.warn("[Adventurer] Game overlay's native bridge isn't available (VencordNative.pluginHelpers.Adventurer is missing). Either you're on a web/extension build (unsupported), or native.ts isn't sitting next to index.tsx in the plugin folder and wasn't picked up by the build.");
         return;
     }
     try {
-        await Native.setOverlayScript(buildOverlayScript());
+        await Native.setOverlayScript(script);
     } catch (e) {
         console.error("[Adventurer] Failed to install game overlay:", e);
     }
+}
+
+// Re-evaluates which injected parts are wanted after a settings change: re-bakes what future frames get and tells
+// the frames that are already running.
+async function refreshInjectedScripts() {
+    if (buildInjectedScript()) await startGameOverlay();
+    else await stopGameOverlay();
+    pushOverlayState(true);
+    applyVolume();
+    pushMinimap();
+    pushCompletion();
+}
+
+// Sends the current volume to the running activity frames and refreshes what future frames start with.
+function applyVolume() {
+    if (!settings.store.experiencesVolumeControl) return;
+    pushVolume(settings.store.experiencesVolume, settings.store.experiencesMuted);
+    if (Native) Native.setOverlayScript(buildInjectedScript()).catch(() => { });
 }
 
 async function stopGameOverlay() {
@@ -1276,8 +1530,9 @@ async function stopGameOverlay() {
 // Live-updates an already-injected overlay (color/enabled changes) without
 // needing to reinject — postMessage works cross-origin even though direct
 // DOM access to the iframe doesn't.
-function pushOverlayState() {
-    if (!settings.store.experiencesHack) return;
+function pushOverlayState(force = false) {
+    // `force` also pushes the "off" state, so turning the overlay off hides one that is already running.
+    if (!settings.store.experiencesHack && !force) return;
     const enabled = !!settings.store.experiencesHack;
     const primary = hexToFloatRgb(settings.store.experiencesPrimaryColor);
     const secondary = hexToFloatRgb(settings.store.experiencesSecondaryColor);
@@ -1297,8 +1552,8 @@ function pushOverlayState() {
     });
 
     // Also refresh what gets baked into future frame loads.
-    if (Native) {
-        Native.setOverlayScript(buildOverlayScript()).catch(() => { });
+    if (Native && buildInjectedScript()) {
+        Native.setOverlayScript(buildInjectedScript()).catch(() => { });
     }
 }
 
@@ -1391,7 +1646,7 @@ async function launchGameDebug(quest: any, forceExe?: string): Promise<boolean> 
     return true;
 }
 
-async function stopGame(questName?: string) {
+async function stopGame(questName?: string, pauseAutoComplete = false) {
     if (settings.store.gameTrackingMode === "debug") {
         if (!_debugGameQuestId) return;
 
@@ -1423,7 +1678,7 @@ async function stopGame(questName?: string) {
             await fetch(`${getServer()}/stop`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ userId: getCurrentUserId() })
+                body: JSON.stringify({ userId: getCurrentUserId(), pauseAutoComplete })
             });
         } catch (e) {
             console.error("[Adventurer] Failed to send stop command to game server:", e);
@@ -1432,7 +1687,7 @@ async function stopGame(questName?: string) {
 }
 
 async function handleForceKill() {
-    await stopGame();
+    await stopGame(undefined, true);
     running = false;
     queue.length = 0;
     for (const q of getAcceptedQuests()) {
@@ -1500,8 +1755,6 @@ async function waitForCompletion(quest: any, taskKey: string, target: number, qu
         }
         if (isAppRunning(appId)) {
             gameWasDetected = true;
-        } else if (gameWasDetected) {
-            gameClosed = true;
         }
     };
 
@@ -1770,7 +2023,7 @@ function getQuestAppId(quest: any, task?: any): string | null {
 function getQuestType(quest: any): QuestType {
     const tasks = quest?.config?.taskConfigV2?.tasks ?? {};
 
-    if (tasks["WATCH_VIDEO"]) {
+    if (tasks["WATCH_VIDEO"] || tasks["WATCH_VIDEO_ON_MOBILE"]) {
         return QuestType.VIDEO;
     }
 
@@ -1800,10 +2053,11 @@ function getQuestTask(quest: any): { key: string; target: number; isVideo: boole
 
     const type = getQuestType(quest);
 
-    if (type === QuestType.VIDEO && tasks["WATCH_VIDEO"]) {
+    const videoTask = tasks["WATCH_VIDEO"] ?? tasks["WATCH_VIDEO_ON_MOBILE"];
+    if (type === QuestType.VIDEO && videoTask) {
         return {
-            key: "WATCH_VIDEO",
-            target: tasks["WATCH_VIDEO"].target ?? 0,
+            key: videoTask.type ?? (tasks["WATCH_VIDEO"] ? "WATCH_VIDEO" : "WATCH_VIDEO_ON_MOBILE"),
+            target: videoTask.target ?? 0,
             isVideo: true,
             type: QuestType.VIDEO
         };
@@ -1855,7 +2109,7 @@ function checkForNewQuests() {
 
     const filtered = newQuests.filter(quest => {
         const orbs = getOrbQuantity(quest);
-        const isVideo = !!quest?.config?.taskConfigV2?.tasks?.["WATCH_VIDEO"];
+        const isVideo = !!(quest?.config?.taskConfigV2?.tasks?.["WATCH_VIDEO"] || quest?.config?.taskConfigV2?.tasks?.["WATCH_VIDEO_ON_MOBILE"]);
         if (settings.store.notifyOrbsOnly && orbs === 0) return false;
         if (orbs < (settings.store.notifyMinOrbs ?? 0)) return false;
         if (isVideo && !settings.store.notifyVideoQuests) return false;
@@ -1867,7 +2121,7 @@ function checkForNewQuests() {
     if (filtered.length === 1) {
         const quest = filtered[0];
         const orbs = getOrbQuantity(quest);
-        const isVideo = !!quest?.config?.taskConfigV2?.tasks?.["WATCH_VIDEO"];
+        const isVideo = !!(quest?.config?.taskConfigV2?.tasks?.["WATCH_VIDEO"] || quest?.config?.taskConfigV2?.tasks?.["WATCH_VIDEO_ON_MOBILE"]);
         const name = quest?.config?.messages?.questName ?? quest?.config?.messages?.gameTitle ?? quest?.id;
         const orbStr = orbs ? ` - ◇ ${orbs.toLocaleString()} orbs` : "";
         const kind = isVideo ? "Video quest" : "Game quest";
@@ -1915,7 +2169,10 @@ async function processQuests(): Promise<void> {
             const progress = q?.userStatus?.progress ?? {};
             const key = Object.keys(tasks)[0];
             if (!key) return 0;
-            const cur = progress[key]?.value ?? 0;
+            const cur = progress[key]?.value
+                ?? progress["WATCH_VIDEO"]?.value
+                ?? progress["WATCH_VIDEO_ON_MOBILE"]?.value
+                ?? 0;
             const total = tasks[key]?.target ?? 1;
             return cur / total;
         };
@@ -1962,6 +2219,13 @@ async function processQuests(): Promise<void> {
 
     console.log(`[Adventurer] processQuests: ${queue.length} quests queued (wasRunning=${wasRunning})`);
     if (queue.length > 0 && !wasRunning) runQueue();
+}
+
+function onQuestsFetched() {
+    if (normalizeAllQuests()) {
+        try { findStoreLazy("QuestStore")?.emitChange?.(); } catch (e) { }
+    }
+    processQuests();
 }
 
 async function fetchAndProcess() {
@@ -2314,8 +2578,23 @@ export default definePlugin({
                 match: /return ([^;]+?"Not rendered due to ineligibility"[^;]*?,null);/,
                 replace: "if(!$self.shouldShowBar(t)) return $1;"
             }
+        },
+        {
+            // The quest header shown above a running activity (quest name, progress %, claim button). The volume
+            // control goes first in the progress stack, next to the progress bar.
+            find: '"quest-activity-header-popout"',
+            replacement: {
+                match: /(\(0,(\i)\.jsxs\)\(\i\.\i,\{className:\i\.\i,direction:"horizontal",align:"center",gap:16,children:\[)(?=\(0,\i\.jsxs\)\("div",\{className:\i\.\i,children:\[\(0,\i\.jsx\)\(\i\.\i,\{variant:"text-sm\/semibold")/,
+                replace: "$1(0,$2.jsx)($self.QuestVolume,{}),"
+            }
         }
     ],
+
+    QuestVolume() {
+        const { experiencesVolumeControl } = settings.use(["experiencesVolumeControl"]);
+        if (!experiencesVolumeControl) return null;
+        return <VolumeControl settings={settings as any} onChange={applyVolume} />;
+    },
 
     AdventurerBar({ quest }: { quest: any; }) {
         const [, forceUpdate] = React.useReducer((x: number) => x + 1, 0);
@@ -2359,13 +2638,6 @@ export default definePlugin({
                 FluxDispatcher.unsubscribe("QUESTS_FETCH_CURRENT_QUESTS_SUCCESS", handleSync);
                 FluxDispatcher.unsubscribe("QUEST_UPDATE", handleSync);
                 clearInterval(syncInterval);
-
-                if (running) {
-                    running = false;
-                    queue.length = 0;
-                    stopGame();
-                    updateBar({ activeQuestName: null, forceKillVisible: false });
-                }
             };
         }, []);
 
@@ -2488,6 +2760,13 @@ export default definePlugin({
 
         async function handleAutoComplete() {
             updateBar({ error: null });
+            try {
+                await fetch(`${getServer()}/start`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ userId: getCurrentUserId() })
+                });
+            } catch { }
             await fetchAndProcess();
         }
 
@@ -2715,18 +2994,20 @@ export default definePlugin({
 
         initKnownQuests();
 
-        FluxDispatcher.subscribe("QUESTS_FETCH_CURRENT_QUESTS_SUCCESS", processQuests);
+        normalizeAllQuests();
+        try { findStoreLazy("QuestStore")?.emitChange?.(); } catch (e) { }
+
+        FluxDispatcher.subscribe("QUESTS_FETCH_CURRENT_QUESTS_SUCCESS", onQuestsFetched);
         FluxDispatcher.subscribe("QUESTS_SEND_HEARTBEAT_SUCCESS", processQuests);
-        FluxDispatcher.subscribe("QUESTS_ENROLL_SUCCESS", processQuests);
+        FluxDispatcher.subscribe("QUESTS_ENROLL_SUCCESS", onQuestsFetched);
 
         if (settings.store.enableVideoTabOut) {
             startVideoObserver();
             tryPatchNow();
         }
 
-        if (settings.store.experiencesHack) {
-            startGameOverlay();
-        }
+        startGameOverlay();
+        QUEST_SYNC_EVENTS.forEach(type => FluxDispatcher.subscribe(type, scheduleQuestSync));
 
         startUIObserver();
         sendHeartbeat(true);
@@ -2734,10 +3015,15 @@ export default definePlugin({
         console.log("[Adventurer] Setting up heartbeat interval...");
         _heartbeatIntervalHandle = setInterval(async () => {
             console.log("[Adventurer] Heartbeat tick");
-            if (location.pathname.includes("/quest-home") && settings.store.barHidden) {
-                settings.store.barHidden = false;
-                try { findStoreLazy("QuestStore")?.emitChange?.(); } catch (e) { }
-                FluxDispatcher.dispatch({ type: "QUEST_UPDATE" });
+            if (location.pathname.includes("/quest-home")) {
+                if (normalizeAllQuests()) {
+                    try { findStoreLazy("QuestStore")?.emitChange?.(); } catch (e) { }
+                }
+                if (settings.store.barHidden) {
+                    settings.store.barHidden = false;
+                    try { findStoreLazy("QuestStore")?.emitChange?.(); } catch (e) { }
+                    FluxDispatcher.dispatch({ type: "QUEST_UPDATE" });
+                }
             }
 
             const wasOnline = _serverOnline;
@@ -2753,9 +3039,14 @@ export default definePlugin({
     },
 
     stop() {
-        FluxDispatcher.unsubscribe("QUESTS_FETCH_CURRENT_QUESTS_SUCCESS", processQuests);
+        FluxDispatcher.unsubscribe("QUESTS_FETCH_CURRENT_QUESTS_SUCCESS", onQuestsFetched);
         FluxDispatcher.unsubscribe("QUESTS_SEND_HEARTBEAT_SUCCESS", processQuests);
-        FluxDispatcher.unsubscribe("QUESTS_ENROLL_SUCCESS", processQuests);
+        FluxDispatcher.unsubscribe("QUESTS_ENROLL_SUCCESS", onQuestsFetched);
+        QUEST_SYNC_EVENTS.forEach(type => FluxDispatcher.unsubscribe(type, scheduleQuestSync));
+        if (_questSyncTimer) {
+            clearTimeout(_questSyncTimer);
+            _questSyncTimer = null;
+        }
 
         if (_heartbeatIntervalHandle) {
             clearInterval(_heartbeatIntervalHandle);
@@ -2767,7 +3058,7 @@ export default definePlugin({
             fetch(`${getServer()}/stop`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ userId: getCurrentUserId() })
+                body: JSON.stringify({ userId: getCurrentUserId(), pauseAutoComplete: true })
             }).catch((e) => {
                 console.error("[Adventurer] Failed to send shutdown stop command to server:", e);
             });

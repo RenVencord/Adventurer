@@ -96,7 +96,8 @@ def load_prefs() -> dict:
         "update_scope": "Any",
         "vencord_source_dir": "",
         "skipped_app_version": "",
-        "skipped_plugin_version": ""
+        "skipped_plugin_version": "",
+        "installed_plugin_version": ""
     }
     if os.path.exists(PREFS_FILE):
         try:
@@ -115,6 +116,12 @@ def save_prefs(prefs: dict):
             json.dump(prefs, f)
     except Exception:
         pass
+
+
+def record_installed_plugin_version(prefs: dict, version: str):
+    """Remember which plugin version is installed in Vencord, so updates and syncs compare against it."""
+    prefs["installed_plugin_version"] = version
+    save_prefs(prefs)
 
 
 def _load_quest_svg(size: int = 32) -> QPixmap | None:
@@ -757,7 +764,8 @@ class ActiveQuestPanel(QWidget):
     def _on_click_stop(self):
         server_state.set_auto_complete_enabled(False)
         try:
-            req = urllib.request.Request("http://127.0.0.1:5000/stop", data=b"{}", headers={"Content-Type": "application/json"})
+            body = json.dumps({"pauseAutoComplete": True}).encode("utf-8")
+            req = urllib.request.Request("http://127.0.0.1:5000/stop", data=body, headers={"Content-Type": "application/json"})
             urllib.request.urlopen(req, timeout=3)
         except Exception:
             pass
@@ -1263,10 +1271,7 @@ class VencordManagerDialog(QDialog):
         self.btn_build_vencord.setEnabled(False)
         self.btn_setup_vencord.setEnabled(False)
 
-        self._build_worker = vencord_helper.VencordBuildWorker(target_dir, mode="build")
-        self._build_worker.log_signal.connect(self.vencord_log.appendPlainText)
-        self._build_worker.finished_signal.connect(self._on_worker_finished)
-        self._build_worker.start()
+        self._start_build_worker(target_dir, "build")
 
     def _on_setup_vencord(self):
         target_dir = self.txt_vencord_dir.text().strip() or os.path.join(os.path.expanduser("~"), "Vencord")
@@ -1277,13 +1282,14 @@ class VencordManagerDialog(QDialog):
         self.btn_setup_vencord.setEnabled(False)
         self.btn_build_vencord.setEnabled(False)
 
-        self._build_worker = vencord_helper.VencordBuildWorker(target_dir, mode="setup")
-        self._build_worker.log_signal.connect(self.vencord_log.appendPlainText)
-        self._build_worker.finished_signal.connect(self._on_worker_finished)
-        self._build_worker.start()
+        self._start_build_worker(target_dir, "setup")
 
-        self._build_worker = vencord_helper.VencordBuildWorker(target_dir, mode="setup")
+    def _start_build_worker(self, target_dir: str, mode: str):
+        self._build_worker = vencord_helper.VencordBuildWorker(
+            target_dir, mode=mode, installed_plugin_version=self._prefs.get("installed_plugin_version", "")
+        )
         self._build_worker.log_signal.connect(self.vencord_log.appendPlainText)
+        self._build_worker.plugin_synced_signal.connect(lambda version: record_installed_plugin_version(self._prefs, version))
         self._build_worker.finished_signal.connect(self._on_worker_finished)
         self._build_worker.start()
 
@@ -1485,6 +1491,28 @@ class UpdateCheckerThread(QThread):
                 server_state.log_event(f"[Updater] Update check failed: {e}")
 
 
+class PluginUpdateThread(QThread):
+    finished_signal = pyqtSignal(bool, str)
+
+    def __init__(self, prefs: dict, vencord_dir: str):
+        super().__init__()
+        self.prefs = prefs
+        self.vencord_dir = vencord_dir
+
+    def run(self):
+        upd = updater.AutoUpdater(self.prefs)
+        files = upd.fetch_latest_plugin_files()
+        if files is None:
+            self.finished_signal.emit(False, "The plugin files could not be downloaded from GitHub. Nothing was changed.")
+            return
+        try:
+            vencord_helper.install_plugin_update(self.vencord_dir, files)
+        except vencord_helper.PluginInstallError as e:
+            self.finished_signal.emit(False, str(e))
+            return
+        self.finished_signal.emit(True, "")
+
+
 class UserMenuItemWidget(QFrame):
     clicked = pyqtSignal(str)
 
@@ -1684,6 +1712,7 @@ class MainWindow(QMainWindow):
         self._quest_svg_pm = _load_quest_svg(64)
         self._upd_checker = None
         self._plugin_worker = None
+        self._plugin_update_thread = None
 
         self._setup_style()
         self._setup_tray()
@@ -1743,8 +1772,16 @@ class MainWindow(QMainWindow):
                 self._open_vencord_settings()
             return
 
+        # A GitHub update would overwrite the local source checkout that is linked into Vencord.
+        if vencord_helper.is_source_checkout_plugin_dir(vencord_dir):
+            if server_state.should_log("updater"):
+                server_state.log_event(
+                    f"[Updater] Plugin update {version} skipped: Vencord's plugin folder is the local source checkout."
+                )
+            return
+
         if mode == "Auto":
-            self._apply_plugin_update(version, vencord_dir)
+            self._apply_plugin_update(version, vencord_dir, notify_failure=False)
         else:
             reply = QMessageBox.question(
                 self,
@@ -1753,26 +1790,41 @@ class MainWindow(QMainWindow):
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
             )
             if reply == QMessageBox.StandardButton.Yes:
-                self._apply_plugin_update(version, vencord_dir)
+                self._apply_plugin_update(version, vencord_dir, notify_failure=True)
 
-    def _apply_plugin_update(self, version: str, vencord_dir: str):
-        upd = updater.AutoUpdater(self._prefs)
-        code = upd.fetch_latest_plugin_code()
-        if code:
-            synced = vencord_helper.sync_plugin_file(vencord_dir, code)
-            if synced:
-                self._plugin_worker = vencord_helper.VencordBuildWorker(vencord_dir, mode="build")
-                def on_finished(success, msg):
-                    if success:
-                        QMessageBox.information(
-                            self,
-                            "Plugin Updated & Vencord Rebuilt",
-                            f"Adventurer Plugin has been updated to {version} and Vencord was successfully rebuilt!\n\nPlease restart Discord (Ctrl+R) to apply changes."
-                        )
-                    else:
-                        QMessageBox.warning(self, "Vencord Build Failed", f"Plugin file was updated, but Vencord build failed:\n{msg}")
-                self._plugin_worker.finished_signal.connect(on_finished)
-                self._plugin_worker.start()
+    def _apply_plugin_update(self, version: str, vencord_dir: str, notify_failure: bool):
+        busy = (self._plugin_update_thread, self._plugin_worker)
+        if any(t is not None and t.isRunning() for t in busy):
+            return
+
+        def on_update_finished(success, msg):
+            if not success:
+                if server_state.should_log("updater"):
+                    server_state.log_event(f"[Updater] Plugin update {version} failed: {msg}")
+                if notify_failure:
+                    QMessageBox.warning(self, "Plugin Update Failed", msg)
+                return
+
+            record_installed_plugin_version(self._prefs, version)
+
+            # The plugin in Vencord is now the downloaded one: building must not sync the bundled copy over it.
+            self._plugin_worker = vencord_helper.VencordBuildWorker(vencord_dir, mode="build", sync_plugin=False)
+
+            def on_build_finished(success, msg):
+                if success:
+                    QMessageBox.information(
+                        self,
+                        "Plugin Updated & Vencord Rebuilt",
+                        f"Adventurer Plugin has been updated to {version} and Vencord was successfully rebuilt!\n\nPlease restart Discord (Ctrl+R) to apply changes."
+                    )
+                else:
+                    QMessageBox.warning(self, "Vencord Build Failed", f"Plugin files were updated, but Vencord build failed:\n{msg}")
+            self._plugin_worker.finished_signal.connect(on_build_finished)
+            self._plugin_worker.start()
+
+        self._plugin_update_thread = PluginUpdateThread(self._prefs, vencord_dir)
+        self._plugin_update_thread.finished_signal.connect(on_update_finished)
+        self._plugin_update_thread.start()
 
     def _setup_style(self):
         self.setStyleSheet(f"""

@@ -3,8 +3,10 @@ A Vencord plugin to automate Discord Quests.
 
 ## Features
 - Freely tab out of video quests
+- Watch mobile video quests on desktop
 - Spoof game exes for play quests
-- One click experiences quests with ESP
+- One click experience quests with ESP, minimap, and adaptive learning capabilities
+- Adjust experience quests volume
 - Notifications when new quests are available
 - Randomized open and close times
 - Companion app for spoofing game exes and tracking quests
@@ -27,6 +29,8 @@ A Vencord plugin to automate Discord Quests.
 - **Primary Color** sets the color for orb related quest items
 - **Secondary Color** sets the color for any interactable items
 - **Highlight Color** sets the color when highlighting an item
+- **Minimap** shows all the camera points available and lets you jump between them
+- **Volume** sets the volume of experiences
 
 ### Notifications
 - **Server Port** sets the port for the companion app
@@ -57,6 +61,5 @@ I will hopefully have a build in release soon, but for now:
 - Better multi-account management
 - Better log output management
 - Quest claim fanfare
-- Experiences volume control
 - Better quest page direct
 - Plugin installer and auto updater

@@ -14,8 +14,56 @@
  */
 
 import { IpcMainInvokeEvent, WebContents, WebFrameMain } from "electron";
+import { readdirSync, readFileSync } from "fs";
+import { homedir } from "os";
+import { join } from "path";
 
 const QUEST_FRAME_HOST = /(^|\.)discordsays\.com$/i;
+
+// Experience profiles written by Vencord Workbench (Experience tab). One JSON file per application and scene, named
+// <application id>__<scene>.json. They are re-read every time a script is injected into a frame (frame load, or the
+// renderer re-injecting after a setting or quest change), so editing one only needs a quest reload. The quest
+// completion runner (experiences/completion.ts) reads the `completion` recipe of each profile and ignores profiles
+// without one. Its injected script contains the placeholder token below exactly once.
+const PROFILE_DIR = join(homedir(), ".vencord_workbench", "profiles");
+const PROFILE_PLACEHOLDER = "__ADVENTURER_PROFILES__";
+
+function applicationIdOf(frame: WebFrameMain): string | null {
+    try {
+        const label = new URL(frame.url).hostname.split(".")[0];
+        return /^\d+$/.test(label) ? label : null;
+    } catch {
+        return null;
+    }
+}
+
+/** Every readable profile for an application id, newest first. Never throws: no profile folder means no profiles. */
+function profilesFor(applicationId: string | null): unknown[] {
+    if (!applicationId) return [];
+    try {
+        return readdirSync(PROFILE_DIR)
+            .filter(name => name.startsWith(`${applicationId}__`) && name.endsWith(".json"))
+            .map(name => {
+                try {
+                    const data = JSON.parse(readFileSync(join(PROFILE_DIR, name), "utf-8"));
+                    return { created: String(data?.created ?? ""), data };
+                } catch {
+                    return null;   // a half-written or hand-edited file must not break the others
+                }
+            })
+            .filter((p): p is { created: string; data: unknown; } => p !== null)
+            .sort((a, b) => b.created.localeCompare(a.created))
+            .map(p => p.data);
+    } catch {
+        return [];
+    }
+}
+
+/** Fills the profile placeholder of an overlay script for the frame it is about to run in. */
+function withProfiles(script: string, frame: WebFrameMain): string {
+    if (!script.includes(PROFILE_PLACEHOLDER)) return script;
+    return script.split(PROFILE_PLACEHOLDER).join(JSON.stringify(profilesFor(applicationIdOf(frame))));
+}
 
 // Tracks which WebContents (i.e. which Discord window) already has a
 // did-frame-finish-load listener registered, so we don't double-subscribe.
@@ -44,7 +92,7 @@ function findQuestFrames(contents: WebContents): WebFrameMain[] {
 }
 
 function runInFrame(frame: WebFrameMain, script: string) {
-    frame.executeJavaScript(script).catch(e => {
+    frame.executeJavaScript(withProfiles(script, frame)).catch(e => {
         console.error("[Adventurer/native] Failed executing overlay script in quest frame:", e);
     });
 }

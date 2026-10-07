@@ -1,9 +1,13 @@
 import os
 import sys
 import json
+import hashlib
+import http.client
 import subprocess
+import urllib.parse
 import urllib.request
 import urllib.error
+import plugin_files
 import server_state
 
 def _log(msg: str):
@@ -28,8 +32,25 @@ REPO_OWNER = "RenVencord"
 REPO_NAME = "Adventurer"
 
 MANIFEST_RAW_URL = f"https://raw.githubusercontent.com/{REPO_OWNER}/{REPO_NAME}/main/version_manifest.json"
-PLUGIN_RAW_URL = f"https://raw.githubusercontent.com/{REPO_OWNER}/{REPO_NAME}/main/adventurer/index.tsx"
+PLUGIN_TREE_API_URL = f"https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}/git/trees/main?recursive=1"
+PLUGIN_RAW_BASE_URL = f"https://raw.githubusercontent.com/{REPO_OWNER}/{REPO_NAME}/main/"
 RELEASES_API_URL = f"https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}/releases/latest"
+
+
+class PluginDownloadError(Exception):
+    pass
+
+
+def _http_get(url: str, timeout: int = 15) -> bytes:
+    req = urllib.request.Request(url, headers={"User-Agent": "Adventurer-Updater"})
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        if resp.status != 200:
+            raise PluginDownloadError(f"HTTP {resp.status} for {url}")
+        return resp.read()
+
+
+def _git_blob_sha(data: bytes) -> str:
+    return hashlib.sha1(b"blob %d\0" % len(data) + data).hexdigest()
 
 
 def parse_semver(ver_str: str) -> tuple[int, int, int]:
@@ -118,7 +139,9 @@ class AutoUpdater:
                     if not remote_plugin_ver or remote_plugin_ver == skipped:
                         return False, ""
 
-                    if is_version_newer(PLUGIN_VERSION, remote_plugin_ver, scope):
+                    # The version recorded when the plugin in Vencord was last installed beats the bundled one.
+                    installed_ver = self.prefs.get("installed_plugin_version", "").strip() or PLUGIN_VERSION
+                    if is_version_newer(installed_ver, remote_plugin_ver, scope):
                         self.latest_plugin_version = remote_plugin_ver
                         _log(f"Plugin update available: {remote_plugin_ver}")
                         return True, remote_plugin_ver
@@ -162,14 +185,53 @@ class AutoUpdater:
                     pass
             return False
 
-    def fetch_latest_plugin_code(self) -> str | None:
+    def _list_remote_plugin_files(self) -> dict[str, str]:
+        """Map every plugin runtime file in the repository (path relative to the plugin folder) to its git blob sha."""
+        tree = json.loads(_http_get(PLUGIN_TREE_API_URL).decode("utf-8"))
+        if tree.get("truncated"):
+            raise PluginDownloadError("GitHub returned a truncated file listing.")
+
+        prefix = plugin_files.PLUGIN_DIR_NAME + "/"
+        listed = {}
+        for entry in tree.get("tree", []):
+            path = entry.get("path", "")
+            if entry.get("type") != "blob" or entry.get("mode") == "120000" or not path.startswith(prefix):
+                continue
+            rel = path[len(prefix):]
+            if plugin_files.is_runtime_file(rel):
+                listed[rel] = entry["sha"]
+
+        if plugin_files.ENTRY_POINT not in listed:
+            raise PluginDownloadError(f"The repository has no {plugin_files.ENTRY_POINT} in its plugin folder.")
+        return listed
+
+    def fetch_latest_plugin_files(self) -> dict[str, bytes] | None:
+        """Download every runtime file of the plugin from GitHub.
+
+        The file list comes from the git trees API, filtered by plugin_files.is_runtime_file, so new files upstream
+        are picked up without a code change. Each download is checked against the blob sha of that listing, which
+        also guarantees all files belong to the same repository snapshot.
+        Returns {path relative to the plugin folder: content}, or None if anything is missing or invalid, so a
+        partial download is never installed.
+        """
         try:
-            req = urllib.request.Request(PLUGIN_RAW_URL, headers={"User-Agent": "Adventurer-Updater"})
-            with urllib.request.urlopen(req, timeout=15) as resp:
-                if resp.status == 200:
-                    return resp.read().decode("utf-8")
-        except Exception as e:
-            _log(f"Fetch plugin code failed: {e}")
+            listed = self._list_remote_plugin_files()
+            files = {}
+            for rel, sha in listed.items():
+                data = _http_get(PLUGIN_RAW_BASE_URL + urllib.parse.quote(f"{plugin_files.PLUGIN_DIR_NAME}/{rel}"))
+                if not data:
+                    raise PluginDownloadError(f"{rel} is empty.")
+                if _git_blob_sha(data) != sha:
+                    raise PluginDownloadError(f"{rel} does not match the repository listing (the repository changed during the download or a stale copy was served).")
+                try:
+                    data.decode("utf-8")
+                except UnicodeDecodeError as e:
+                    raise PluginDownloadError(f"{rel} is not valid UTF-8: {e}") from e
+                files[rel] = data
+            _log(f"Downloaded {len(files)} plugin files.")
+            return files
+        except (OSError, ValueError, KeyError, http.client.HTTPException, PluginDownloadError) as e:
+            _log(f"Fetch plugin files failed: {e}")
         return None
 
     def _trigger_exe_swap(self, current_exe: str, new_exe: str):

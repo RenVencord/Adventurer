@@ -3,3 +3,4 @@ requests
 flask-cors
 flask
 psutil
+Pillow

@@ -485,6 +485,7 @@ def run():
 
     quest_id = quest_obj.get("id") if quest_obj else None
     server_state.set_active_quest(quest_id, quest_obj, "running", 0)
+    server_state.set_auto_complete_enabled(True)
 
     msg = f"Launched {app_data['name']} (quest {quest_id})"
     log.info(msg)
@@ -610,8 +611,10 @@ def detectable():
 def stop():
     body = request.get_json(silent=True) or {}
     user_id = body.get("userId") if body else None
+    pause_auto_complete = body.get("pauseAutoComplete", False)
 
-    server_state.set_auto_complete_enabled(False)
+    if pause_auto_complete:
+        server_state.set_auto_complete_enabled(False)
     _kill_all_running()
     server_state.set_active_quest(None, None, None, 0)
     cleanup_stubs()
