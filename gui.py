@@ -1267,18 +1267,18 @@ class VencordManagerDialog(QDialog):
             saved_v_dir = vencord_helper.find_vencord_dir() or os.path.join(os.path.expanduser("~"), "Vencord")
         self.txt_vencord_dir.setText(saved_v_dir)
 
-        btn_browse_v = QPushButton()
+        self.btn_browse_v = QPushButton()
         browse_icon = _load_svg_icon(BROWSE_ICON_SVG_PATH, 16)
         if not browse_icon.isNull():
-            btn_browse_v.setIcon(browse_icon)
-            btn_browse_v.setIconSize(QSize(16, 16))
+            self.btn_browse_v.setIcon(browse_icon)
+            self.btn_browse_v.setIconSize(QSize(16, 16))
         else:
-            btn_browse_v.setText("Browse...")
-        btn_browse_v.setFixedWidth(36)
-        btn_browse_v.setToolTip("Browse...")
-        btn_browse_v.clicked.connect(self._browse_vencord_dir)
+            self.btn_browse_v.setText("Browse...")
+        self.btn_browse_v.setFixedWidth(36)
+        self.btn_browse_v.setToolTip("Browse...")
+        self.btn_browse_v.clicked.connect(self._browse_vencord_dir)
         vencord_box.addWidget(self.txt_vencord_dir)
-        vencord_box.addWidget(btn_browse_v)
+        vencord_box.addWidget(self.btn_browse_v)
         form.addRow("Vencord Source Dir:", vencord_box)
         layout.addLayout(form)
 
@@ -1298,15 +1298,25 @@ class VencordManagerDialog(QDialog):
         self.vencord_log.hide()
         layout.addWidget(self.vencord_log)
 
-        btns = QDialogButtonBox(
+        self.button_box = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
         )
-        btns.accepted.connect(self.accept)
-        btns.rejected.connect(self.reject)
-        layout.addWidget(btns)
+        self.btn_ok = self.button_box.button(QDialogButtonBox.StandardButton.Ok)
+        self.btn_cancel = self.button_box.button(QDialogButtonBox.StandardButton.Cancel)
+        self.button_box.accepted.connect(self.accept)
+        self.button_box.rejected.connect(self.reject)
+        layout.addWidget(self.button_box)
 
         self.adjustSize()
         self._build_worker = None
+
+    def _set_ui_busy(self, busy: bool):
+        self.btn_build_vencord.setEnabled(not busy)
+        self.btn_setup_vencord.setEnabled(not busy)
+        self.btn_browse_v.setEnabled(not busy)
+        self.txt_vencord_dir.setEnabled(not busy)
+        if self.btn_ok:
+            self.btn_ok.setEnabled(not busy)
 
     def _show_console(self):
         if not self.vencord_log.isVisible():
@@ -1338,8 +1348,7 @@ class VencordManagerDialog(QDialog):
 
         self._show_console()
         self.vencord_log.appendPlainText("Starting Vencord sync and build...")
-        self.btn_build_vencord.setEnabled(False)
-        self.btn_setup_vencord.setEnabled(False)
+        self._set_ui_busy(True)
 
         self._start_build_worker(target_dir, "build")
 
@@ -1352,8 +1361,7 @@ class VencordManagerDialog(QDialog):
 
         self._show_console()
         self.vencord_log.appendPlainText(f"Starting 1-Click Full Vencord Setup in '{target_dir}'...")
-        self.btn_setup_vencord.setEnabled(False)
-        self.btn_build_vencord.setEnabled(False)
+        self._set_ui_busy(True)
 
         self._start_build_worker(target_dir, "setup")
 
@@ -1367,13 +1375,44 @@ class VencordManagerDialog(QDialog):
         self._build_worker.start()
 
     def _on_worker_finished(self, success: bool, message: str):
-        self.btn_build_vencord.setEnabled(True)
-        self.btn_setup_vencord.setEnabled(True)
+        self._set_ui_busy(False)
         self.vencord_log.appendPlainText(f"\nStatus: {message}")
         if success:
             QMessageBox.information(self, "Vencord Build Complete", f"{message}\n\nPlease restart Discord (Ctrl+R) to apply changes.")
         else:
             QMessageBox.critical(self, "Vencord Build Failed", message)
+
+    def accept(self):
+        if self._build_worker and self._build_worker.isRunning():
+            return
+        super().accept()
+
+    def reject(self):
+        if self._build_worker and self._build_worker.isRunning():
+            reply = QMessageBox.question(
+                self,
+                "Installation in Progress",
+                "Vencord setup/build is currently running in the background. Are you sure you want to cancel and close?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                return
+        super().reject()
+
+    def closeEvent(self, event):
+        if self._build_worker and self._build_worker.isRunning():
+            reply = QMessageBox.question(
+                self,
+                "Installation in Progress",
+                "Vencord setup/build is currently running in the background. Are you sure you want to cancel and close?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                event.ignore()
+                return
+        event.accept()
 
     def get_prefs(self) -> dict:
         p = dict(self._prefs)
