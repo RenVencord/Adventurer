@@ -36,6 +36,7 @@ const seen = new Set<string>();
 
 const _knownQuestIds = new Set<string>();
 let _questIdsInitialized = false;
+const _assistedQuestIds = new Set<string>();
 
 let _heartbeatIntervalHandle: any = null;
 let _serverOnline = false;
@@ -59,6 +60,18 @@ const SERVER_DEFAULT_PORT = 5000;
 function getServer() {
     const port = settings.store.serverPort ?? SERVER_DEFAULT_PORT;
     return `http://127.0.0.1:${port}`;
+}
+
+async function reportAssist(questId: string) {
+    if (!questId) return;
+    _assistedQuestIds.add(String(questId));
+    try {
+        await fetch(`${getServer()}/assist`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ questId: String(questId) })
+        });
+    } catch { }
 }
 
 export const enum VideoSelectorMode {
@@ -741,7 +754,8 @@ async function sendHeartbeat(force = false) {
                 userId: getCurrentUserId(),
                 username: getCurrentUsername(),
                 avatar: getCurrentAvatarUrl(),
-                skippedQuests: getSkippedQuests()
+                skippedQuests: getSkippedQuests(),
+                assistedQuestIds: Array.from(_assistedQuestIds)
             })
         });
 
@@ -913,6 +927,19 @@ function patchQuestVideo(video: HTMLVideoElement) {
         console.log("[Adventurer] pause() blocked on quest video");
     };
     patchedVideo = video;
+
+    const questIdEl = document.querySelector("[data-quest-id]");
+    const questId = (questIdEl as HTMLElement)?.dataset?.questId;
+    if (questId) {
+        reportAssist(questId);
+    } else {
+        const accepted = getAcceptedQuests();
+        for (const q of accepted) {
+            if (getQuestType(q) === QuestType.VIDEO) {
+                reportAssist(q.id);
+            }
+        }
+    }
 }
 
 function unpatchQuestVideo() {
@@ -1406,6 +1433,9 @@ function computeCompletionQuests(): Record<string, CompletionQuestStatus> {
             const known = result[appId];
             if (!known || rank(status) > rank(known)) result[appId] = status;
         }
+        if (settings.store.experiencesAutoComplete && status.enrolled && !status.completed) {
+            reportAssist(quest.id);
+        }
     }
     return result;
 }
@@ -1702,6 +1732,7 @@ async function handleForceKill() {
 }
 
 async function launchGame(appId: string, quest: any, forceExe?: string): Promise<boolean> {
+    if (quest?.id) reportAssist(quest.id);
     if (settings.store.gameTrackingMode === "debug") {
         return await launchGameDebug(quest, forceExe);
     } else {
@@ -1930,6 +1961,7 @@ async function runQueue() {
 
         console.log(`[Adventurer] runQueue: processing ${questName} (isVideo=${task.isVideo})`);
         updateBar({ activeQuestName: questName, error: null, forceKillVisible: false });
+        reportAssist(quest.id);
 
         if (task.isVideo) {
             tryPatchNow();

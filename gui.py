@@ -22,6 +22,7 @@ from PyQt6.QtGui import (
 from PyQt6.QtSvg import QSvgRenderer
 
 import server_state
+import stats_manager
 import updater
 import vencord_helper
 
@@ -348,19 +349,15 @@ def quest_progress(quest: dict, active_status_type: str | None = None, active_en
 
 
 def is_game_quest(quest: dict) -> bool:
-    if not quest or not isinstance(quest, dict):
-        return False
-    cfg = quest.get("config") or {}
-    task_config = cfg.get("taskConfigV2") or {}
-    return "PLAY_ON_DESKTOP" in (task_config.get("tasks") or {})
+    return stats_manager.is_game_quest(quest)
 
 
 def is_video_quest(quest: dict) -> bool:
-    if not quest or not isinstance(quest, dict):
-        return False
-    cfg = quest.get("config") or {}
-    task_config = cfg.get("taskConfigV2") or {}
-    return "WATCH_VIDEO" in (task_config.get("tasks") or {})
+    return stats_manager.is_video_quest(quest)
+
+
+def is_experience_quest(quest: dict) -> bool:
+    return stats_manager.is_experience_quest(quest)
 
 
 def is_complete(quest: dict) -> bool:
@@ -1754,6 +1751,215 @@ class AboutDialog(QDialog):
         QTimer.singleShot(1500, lambda: self.btn_copy.setText("Copy"))
 
 
+class StatisticsDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Statistics")
+        self.setFixedWidth(540)
+        self.setStyleSheet(f"""
+            QDialog {{
+                background: {BG_DARK.name()};
+                color: {TEXT_PRIMARY.name()};
+            }}
+            QLabel {{
+                color: {TEXT_PRIMARY.name()};
+            }}
+        """)
+
+        global ORB_ICON_BASE64
+        if not ORB_ICON_BASE64:
+            init_orb_icon_base64()
+
+        self._setup_ui()
+        self._refresh_stats()
+
+        self._timer = QTimer(self)
+        self._timer.setInterval(2000)
+        self._timer.timeout.connect(self._refresh_stats)
+        self._timer.start()
+
+    def _setup_ui(self):
+        root_layout = QVBoxLayout(self)
+        root_layout.setContentsMargins(20, 20, 20, 16)
+        root_layout.setSpacing(14)
+
+        # 1. Header (Icon + Title + Subtitle)
+        header_row = QHBoxLayout()
+        header_row.setSpacing(14)
+        header_row.setAlignment(Qt.AlignmentFlag.AlignVCenter)
+
+        icon_pm = _load_quest_svg(42)
+        if icon_pm is None or icon_pm.isNull():
+            icon_pm = _load_logo_png(42)
+
+        icon_lbl = QLabel()
+        if icon_pm and not icon_pm.isNull():
+            icon_scaled = icon_pm.scaled(
+                42, 42,
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation
+            )
+            icon_lbl.setPixmap(icon_scaled)
+        icon_lbl.setFixedSize(42, 42)
+        header_row.addWidget(icon_lbl)
+
+        header_text_col = QVBoxLayout()
+        header_text_col.setSpacing(2)
+        title_lbl = QLabel("Adventurer Statistics")
+        title_lbl.setStyleSheet(f"font-size: 17px; font-weight: bold; color: {TEXT_PRIMARY.name()};")
+        subtitle_lbl = QLabel("Quests completed and rewards earned with Adventurer")
+        subtitle_lbl.setStyleSheet(f"font-size: 12px; color: {TEXT_MUTED.name()};")
+        header_text_col.addWidget(title_lbl)
+        header_text_col.addWidget(subtitle_lbl)
+
+        header_row.addLayout(header_text_col, 1)
+        root_layout.addLayout(header_row)
+
+        # 2. Stats Overview Cards Container
+        cards_container = QFrame()
+        cards_container.setStyleSheet(f"""
+            QFrame {{
+                background: {BG_CARD.name()};
+                border: 1px solid {BORDER.name()};
+                border-radius: 8px;
+            }}
+        """)
+        cards_layout = QVBoxLayout(cards_container)
+        cards_layout.setContentsMargins(12, 12, 12, 12)
+        cards_layout.setSpacing(10)
+
+        # Row 1: Total Quests & Total Orbs
+        row1 = QHBoxLayout()
+        row1.setSpacing(10)
+
+        card_total, self.lbl_total_quests = self._create_card("TOTAL QUESTS", TEXT_PRIMARY.name(), "All quest types", is_large=True)
+        card_orbs, self.lbl_orbs_gained = self._create_card("ORBS GAINED", ACCENT_GOLD.name(), "Earned with Adventurer", is_large=True)
+        row1.addWidget(card_total, 1)
+        row1.addWidget(card_orbs, 1)
+        cards_layout.addLayout(row1)
+
+        # Row 2: Category Breakdown (Game, Video, Experience)
+        row2 = QHBoxLayout()
+        row2.setSpacing(10)
+
+        card_game, self.lbl_game_quests = self._create_card("GAME QUESTS", ACCENT_BLUE.name(), "")
+        card_video, self.lbl_video_quests = self._create_card("VIDEO QUESTS", "#c084fc", "")
+        card_exp, self.lbl_experience_quests = self._create_card("EXPERIENCE QUESTS", ACCENT_GREEN.name(), "")
+        row2.addWidget(card_game, 1)
+        row2.addWidget(card_video, 1)
+        row2.addWidget(card_exp, 1)
+        cards_layout.addLayout(row2)
+
+        root_layout.addWidget(cards_container)
+
+        # 3. Action Buttons (Reset, Close)
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(8)
+
+        self.btn_reset = QPushButton("Reset...")
+        self.btn_reset.setToolTip("Reset all statistics")
+        self.btn_reset.setStyleSheet(f"""
+            QPushButton {{
+                background: {BG_MID.name()};
+                color: {TEXT_MUTED.name()};
+                border: 1px solid {BORDER.name()};
+                border-radius: 4px;
+                padding: 6px 14px;
+                font-weight: 600;
+                font-size: 12px;
+            }}
+            QPushButton:hover {{
+                background: #3c1e24;
+                color: #f23f43;
+                border-color: #f23f43;
+            }}
+        """)
+        self.btn_reset.clicked.connect(self._on_reset)
+        btn_row.addWidget(self.btn_reset)
+
+        btn_row.addStretch()
+
+        btn_close = QPushButton("Close")
+        btn_close.setDefault(True)
+        btn_close.setStyleSheet(f"""
+            QPushButton {{
+                background: {ACCENT_BLUE.name()};
+                color: white;
+                border: none;
+                border-radius: 4px;
+                padding: 6px 20px;
+                font-weight: 700;
+                font-size: 12px;
+            }}
+            QPushButton:hover {{
+                background: #4752c4;
+            }}
+        """)
+        btn_close.clicked.connect(self.accept)
+        btn_row.addWidget(btn_close)
+
+        root_layout.addLayout(btn_row)
+
+    def _create_card(self, title: str, val_color: str, subtitle: str = "", is_large: bool = False) -> tuple[QFrame, QLabel]:
+        card = QFrame()
+        card.setStyleSheet(f"""
+            QFrame {{
+                background: {BG_MID.name()};
+                border: 1px solid {BORDER.name()};
+                border-radius: 6px;
+            }}
+        """)
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(10, 8, 10, 8)
+        layout.setSpacing(2)
+
+        lbl_title = QLabel(title)
+        lbl_title.setStyleSheet(f"font-size: {'11px' if is_large else '10px'}; font-weight: 700; color: {TEXT_MUTED.name()}; border: none; background: transparent;")
+        layout.addWidget(lbl_title)
+
+        val_size = "24px" if is_large else "19px"
+        lbl_val = QLabel("0")
+        lbl_val.setStyleSheet(f"font-size: {val_size}; font-weight: bold; color: {val_color}; border: none; background: transparent;")
+        layout.addWidget(lbl_val)
+
+        if subtitle:
+            lbl_sub = QLabel(subtitle)
+            lbl_sub.setStyleSheet(f"font-size: 10px; color: {TEXT_MUTED.name()}; border: none; background: transparent;")
+            layout.addWidget(lbl_sub)
+
+        return card, lbl_val
+
+    def _refresh_stats(self):
+        summary = stats_manager.get_stats_summary()
+        total = summary.get("total_quests", 0)
+        orbs = summary.get("orbs_gained", 0)
+        games = summary.get("game_quests", 0)
+        videos = summary.get("video_quests", 0)
+        exps = summary.get("experience_quests", 0)
+
+        self.lbl_total_quests.setText(f"{total:,}")
+
+        orb_icon = f"<img src='data:image/png;base64,{ORB_ICON_BASE64}' width='15' height='15'> " if ORB_ICON_BASE64 else "◇ "
+        self.lbl_orbs_gained.setTextFormat(Qt.TextFormat.RichText)
+        self.lbl_orbs_gained.setText(f"{orb_icon}{orbs:,}")
+
+        self.lbl_game_quests.setText(f"{games:,}")
+        self.lbl_video_quests.setText(f"{videos:,}")
+        self.lbl_experience_quests.setText(f"{exps:,}")
+
+    def _on_reset(self):
+        reply = QMessageBox.question(
+            self,
+            "Reset Statistics",
+            "Are you sure you want to reset all Adventurer statistics?\n\nThis will clear all tracked quest completions and orbs gained.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+        if reply == QMessageBox.StandardButton.Yes:
+            stats_manager.reset_stats()
+            self._refresh_stats()
+
+
 class UpdateCheckerThread(QThread):
     app_update_signal = pyqtSignal(str, str, str)
     plugin_update_signal = pyqtSignal(str)
@@ -2231,6 +2437,9 @@ class MainWindow(QMainWindow):
         menubar.setCornerWidget(self._user_btn, Qt.Corner.TopLeftCorner)
 
         file_menu = menubar.addMenu("File")
+        stats_action = QAction("Statistics", self)
+        stats_action.triggered.connect(self._open_statistics)
+        file_menu.addAction(stats_action)
         about_action = QAction("About", self)
         about_action.triggered.connect(self._open_about)
         file_menu.addAction(about_action)
@@ -2358,6 +2567,8 @@ class MainWindow(QMainWindow):
                     qid = quest.get("id")
                     if qid in self._previously_incomplete and is_complete(quest):
                         self._previously_incomplete.discard(qid)
+                        if stats_manager.is_quest_assisted(qid):
+                            stats_manager.record_completed_quest(quest, user_id=selected_id)
                         name = quest_name(quest)
                         orbs = quest_orbs(quest)
                         orb_str = f"\n◇ {orbs:,} orbs - claim your reward!" if orbs else ""
@@ -2546,6 +2757,10 @@ class MainWindow(QMainWindow):
                 f"{name}{orb_str}\n(New {kind})",
                 quest
             )
+
+    def _open_statistics(self):
+        dlg = StatisticsDialog(self)
+        dlg.exec()
 
     def _open_about(self):
         dlg = AboutDialog(self._prefs, self)

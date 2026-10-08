@@ -708,6 +708,15 @@ def reset():
     return jsonify({"status": "reset"})
 
 
+@app.route("/assist", methods=["POST"])
+def assist():
+    body = request.get_json(silent=True) or {}
+    quest_id = body.get("questId")
+    if quest_id:
+        server_state.mark_quest_assisted(quest_id)
+    return jsonify({"status": "ok", "questId": quest_id})
+
+
 @app.route("/heartbeat", methods=["POST"])
 def heartbeat():
     body = request.get_json(silent=True) or {}
@@ -723,6 +732,11 @@ def heartbeat():
     if skipped_from_plugin and isinstance(skipped_from_plugin, list):
         for sq_id in skipped_from_plugin:
             server_state.add_skipped_quest(sq_id)
+
+    assisted_from_plugin = body.get("assistedQuestIds")
+    if assisted_from_plugin and isinstance(assisted_from_plugin, list):
+        for aq_id in assisted_from_plugin:
+            server_state.mark_quest_assisted(aq_id)
 
     server_state.set_quests(user_id, username, avatar, quests)
     log.info(f"Heartbeat from \033[96m{username} ({user_id})\033[0m: {len(quests)} quests")

@@ -2,6 +2,8 @@ import threading
 from collections import deque
 from datetime import datetime
 
+import stats_manager
+
 _lock = threading.RLock()
 
 _users: dict[str, dict] = {}
@@ -180,9 +182,9 @@ def set_quests(user_id: str, username: str, avatar: str | None, quests: list[dic
                         q.get("userStatus") or {}).get("claimedAt")
         }
 
-        if not u["seen_first"]:
+        is_first = not u["seen_first"]
+        if is_first:
             u["known_ids"] = set(incoming_ids)
-            u["seen_first"] = True
             u["new_ids"] = set()
         else:
             new_ids = uncompleted_incoming_ids - u["known_ids"]
@@ -215,8 +217,9 @@ def set_quests(user_id: str, username: str, avatar: str | None, quests: list[dic
 
             name = _get_quest_name(q)
 
-            if u["seen_first"]:
+            if not is_first:
                 if is_completed and not old_comp:
+                    stats_manager.record_completed_quest(q, user_id=user_id)
                     if _log_settings.get("completion", False):
                         _log.append(
                             {"ts": datetime.now().strftime("%H:%M:%S"), "msg": f"[{username}] Quest completed: {name}",
@@ -230,6 +233,9 @@ def set_quests(user_id: str, username: str, avatar: str | None, quests: list[dic
                         _log_cursor += 1
 
             u["quest_status"][qid] = {"completed": is_completed, "progress": current_prog}
+
+        if is_first:
+            u["seen_first"] = True
 
         u["quests"] = quests
 
@@ -256,6 +262,14 @@ def get_users() -> dict[str, dict]:
                 "quest_ids": [q.get("id") for q in u["quests"] if isinstance(q, dict) and "id" in q]
             }
         return result
+
+
+def get_all_users_quests() -> list[dict]:
+    with _lock:
+        all_quests = []
+        for u in _users.values():
+            all_quests.extend(u.get("quests", []))
+        return all_quests
 
 
 def get_selected_user_id() -> str | None:
@@ -294,6 +308,17 @@ def get_state(user_id: str | None = None) -> dict:
         }
 
 
+def mark_quest_assisted(quest_id: str | None):
+    if quest_id:
+        stats_manager.mark_quest_assisted(str(quest_id))
+
+
+def is_quest_assisted(quest_id: str | None) -> bool:
+    if not quest_id:
+        return False
+    return stats_manager.is_quest_assisted(str(quest_id))
+
+
 def set_active_quest(quest_id: str | None, quest_obj: dict | None, status_type: str | None = None, ends_at: int = 0):
     global _active_quest_id, _active_quest, _active_status_type, _active_ends_at
     with _lock:
@@ -301,6 +326,8 @@ def set_active_quest(quest_id: str | None, quest_obj: dict | None, status_type: 
         _active_quest = quest_obj
         _active_status_type = status_type
         _active_ends_at = ends_at
+        if quest_id:
+            stats_manager.mark_quest_assisted(str(quest_id))
 
 
 def get_active_quest() -> tuple[str | None, dict | None]:
