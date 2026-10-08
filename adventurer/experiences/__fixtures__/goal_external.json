@@ -1,0 +1,112 @@
+{
+ "name": "goal_external",
+ "scan": {
+  "ok": true,
+  "scene": "s",
+  "entities": [
+   {
+    "guid": "q",
+    "name": "Quest Manager",
+    "path": "Root/Quest Manager",
+    "enabled": true,
+    "tags": [],
+    "pos": [
+     0,
+     0,
+     0
+    ],
+    "scripts": [
+     {
+      "name": "discordQuestManager",
+      "enabled": true,
+      "attrs": {
+       "questCompleteEvent": "quest:complete",
+       "questProgressEvent": "quest:progress",
+       "enableDebugLogs": false,
+       "progressEvents": []
+      }
+     }
+    ]
+   }
+  ]
+ },
+ "expected": {
+  "ok": true,
+  "hasQuestManager": true,
+  "scene": "s",
+  "goalEvents": [
+   "quest:complete"
+  ],
+  "progressEvents": [
+   {
+    "event": "quest:progress",
+    "key": "quest:progress",
+    "progress": null
+   }
+  ],
+  "rootKeys": [
+   "quest:complete"
+  ],
+  "eventOrder": [
+   "quest:complete",
+   "quest:progress"
+  ],
+  "events": {
+   "quest:complete": {
+    "key": "quest:complete",
+    "name": "quest:complete",
+    "scope": "app",
+    "entity": null,
+    "guid": null,
+    "firedBy": [],
+    "listenedBy": [
+     [
+      "Quest Manager",
+      "discordQuestManager"
+     ]
+    ],
+    "isGoal": true,
+    "isProgress": false,
+    "progress": null,
+    "inGoalClosure": true,
+    "depth": 0,
+    "count": 1,
+    "origin": "external",
+    "args": []
+   },
+   "quest:progress": {
+    "key": "quest:progress",
+    "name": "quest:progress",
+    "scope": "app",
+    "entity": null,
+    "guid": null,
+    "firedBy": [],
+    "listenedBy": [
+     [
+      "Quest Manager",
+      "discordQuestManager"
+     ]
+    ],
+    "isGoal": false,
+    "isProgress": true,
+    "progress": null,
+    "inGoalClosure": false,
+    "depth": null,
+    "count": 1,
+    "origin": "",
+    "args": []
+   }
+  },
+  "edges": [],
+  "interactables": [],
+  "closureKeys": [
+   "quest:complete"
+  ],
+  "closureOrder": [
+   "quest:complete"
+  ],
+  "objectiveNames": [],
+  "objectiveGuids": [],
+  "entityCount": 1
+ }
+}

@@ -1,0 +1,536 @@
+{
+ "name": "sequence_pattern_flags",
+ "scan": {
+  "ok": true,
+  "entities": [
+   {
+    "guid": "q",
+    "name": "Quest Manager",
+    "path": "Root/Quest Manager",
+    "enabled": true,
+    "tags": [],
+    "pos": [
+     0,
+     0,
+     0
+    ],
+    "scripts": [
+     {
+      "name": "discordQuestManager",
+      "enabled": true,
+      "attrs": {
+       "questCompleteEvent": "quest:complete",
+       "questProgressEvent": "quest:progress",
+       "enableDebugLogs": false,
+       "progressEvents": []
+      }
+     }
+    ]
+   },
+   {
+    "guid": "s",
+    "name": "Seq",
+    "path": "Root/Seq",
+    "enabled": true,
+    "tags": [],
+    "pos": [
+     0,
+     0,
+     0
+    ],
+    "scripts": [
+     {
+      "name": "checkEventSequence",
+      "enabled": true,
+      "attrs": {
+       "sequence": [
+        "a:1",
+        "b:2",
+        "a:1"
+       ],
+       "eventToEmitOnCorrect": "seq:ok",
+       "progressEvents": [
+        "",
+        "seq:half"
+       ]
+      }
+     }
+    ]
+   },
+   {
+    "guid": "p",
+    "name": "Pat",
+    "path": "Root/Pat",
+    "enabled": true,
+    "tags": [],
+    "pos": [
+     0,
+     0,
+     0
+    ],
+    "scripts": [
+     {
+      "name": "checkEventPattern",
+      "enabled": true,
+      "attrs": {
+       "onEvents": [
+        "x:1",
+        "y:1",
+        "z:1"
+       ],
+       "requiredEvents": [
+        "x:1",
+        "z:1"
+       ],
+       "confirmEvent": "pat:go",
+       "eventToEmitOnCorrect": "pat:ok"
+      }
+     }
+    ]
+   },
+   {
+    "guid": "f",
+    "name": "Fin",
+    "path": "Root/Fin",
+    "enabled": true,
+    "tags": [],
+    "pos": [
+     0,
+     0,
+     0
+    ],
+    "scripts": [
+     {
+      "name": "eventFlagChecker",
+      "enabled": true,
+      "attrs": {
+       "allTrueEvent": "quest:complete",
+       "events": [
+        {
+         "flagName": "seq",
+         "flag": false,
+         "setTrueEvent": "seq:ok"
+        },
+        {
+         "flagName": "pat",
+         "flag": false,
+         "setTrueEvent": "pat:ok"
+        }
+       ]
+      }
+     }
+    ]
+   }
+  ]
+ },
+ "expected": {
+  "ok": true,
+  "hasQuestManager": true,
+  "scene": "",
+  "goalEvents": [
+   "quest:complete"
+  ],
+  "progressEvents": [
+   {
+    "event": "quest:progress",
+    "key": "quest:progress",
+    "progress": null
+   }
+  ],
+  "rootKeys": [
+   "quest:complete"
+  ],
+  "eventOrder": [
+   "quest:complete",
+   "quest:progress",
+   "a:1",
+   "b:2",
+   "seq:ok",
+   "seq:half",
+   "x:1",
+   "y:1",
+   "z:1",
+   "pat:go",
+   "pat:ok"
+  ],
+  "events": {
+   "quest:complete": {
+    "key": "quest:complete",
+    "name": "quest:complete",
+    "scope": "app",
+    "entity": null,
+    "guid": null,
+    "firedBy": [
+     [
+      "Fin",
+      "eventFlagChecker",
+      "allTrueEvent"
+     ]
+    ],
+    "listenedBy": [
+     [
+      "Quest Manager",
+      "discordQuestManager"
+     ]
+    ],
+    "isGoal": true,
+    "isProgress": false,
+    "progress": null,
+    "inGoalClosure": true,
+    "depth": 0,
+    "count": 1,
+    "origin": "derived",
+    "args": []
+   },
+   "quest:progress": {
+    "key": "quest:progress",
+    "name": "quest:progress",
+    "scope": "app",
+    "entity": null,
+    "guid": null,
+    "firedBy": [],
+    "listenedBy": [
+     [
+      "Quest Manager",
+      "discordQuestManager"
+     ]
+    ],
+    "isGoal": false,
+    "isProgress": true,
+    "progress": null,
+    "inGoalClosure": false,
+    "depth": null,
+    "count": 1,
+    "origin": "",
+    "args": []
+   },
+   "a:1": {
+    "key": "a:1",
+    "name": "a:1",
+    "scope": "app",
+    "entity": null,
+    "guid": null,
+    "firedBy": [],
+    "listenedBy": [
+     [
+      "Seq",
+      "checkEventSequence"
+     ]
+    ],
+    "isGoal": false,
+    "isProgress": false,
+    "progress": null,
+    "inGoalClosure": true,
+    "depth": 2,
+    "count": 2,
+    "origin": "external",
+    "args": []
+   },
+   "b:2": {
+    "key": "b:2",
+    "name": "b:2",
+    "scope": "app",
+    "entity": null,
+    "guid": null,
+    "firedBy": [],
+    "listenedBy": [
+     [
+      "Seq",
+      "checkEventSequence"
+     ]
+    ],
+    "isGoal": false,
+    "isProgress": false,
+    "progress": null,
+    "inGoalClosure": true,
+    "depth": 2,
+    "count": 1,
+    "origin": "external",
+    "args": []
+   },
+   "seq:ok": {
+    "key": "seq:ok",
+    "name": "seq:ok",
+    "scope": "app",
+    "entity": null,
+    "guid": null,
+    "firedBy": [
+     [
+      "Seq",
+      "checkEventSequence",
+      "eventToEmitOnCorrect"
+     ]
+    ],
+    "listenedBy": [
+     [
+      "Fin",
+      "eventFlagChecker"
+     ]
+    ],
+    "isGoal": false,
+    "isProgress": false,
+    "progress": null,
+    "inGoalClosure": true,
+    "depth": 1,
+    "count": 1,
+    "origin": "derived",
+    "args": []
+   },
+   "seq:half": {
+    "key": "seq:half",
+    "name": "seq:half",
+    "scope": "app",
+    "entity": null,
+    "guid": null,
+    "firedBy": [
+     [
+      "Seq",
+      "checkEventSequence",
+      "progressEvents[1]"
+     ]
+    ],
+    "listenedBy": [],
+    "isGoal": false,
+    "isProgress": false,
+    "progress": null,
+    "inGoalClosure": false,
+    "depth": null,
+    "count": 1,
+    "origin": "",
+    "args": []
+   },
+   "x:1": {
+    "key": "x:1",
+    "name": "x:1",
+    "scope": "app",
+    "entity": null,
+    "guid": null,
+    "firedBy": [],
+    "listenedBy": [
+     [
+      "Pat",
+      "checkEventPattern"
+     ]
+    ],
+    "isGoal": false,
+    "isProgress": false,
+    "progress": null,
+    "inGoalClosure": true,
+    "depth": 2,
+    "count": 1,
+    "origin": "external",
+    "args": []
+   },
+   "y:1": {
+    "key": "y:1",
+    "name": "y:1",
+    "scope": "app",
+    "entity": null,
+    "guid": null,
+    "firedBy": [],
+    "listenedBy": [
+     [
+      "Pat",
+      "checkEventPattern"
+     ]
+    ],
+    "isGoal": false,
+    "isProgress": false,
+    "progress": null,
+    "inGoalClosure": false,
+    "depth": null,
+    "count": 1,
+    "origin": "",
+    "args": []
+   },
+   "z:1": {
+    "key": "z:1",
+    "name": "z:1",
+    "scope": "app",
+    "entity": null,
+    "guid": null,
+    "firedBy": [],
+    "listenedBy": [
+     [
+      "Pat",
+      "checkEventPattern"
+     ]
+    ],
+    "isGoal": false,
+    "isProgress": false,
+    "progress": null,
+    "inGoalClosure": true,
+    "depth": 2,
+    "count": 1,
+    "origin": "external",
+    "args": []
+   },
+   "pat:go": {
+    "key": "pat:go",
+    "name": "pat:go",
+    "scope": "app",
+    "entity": null,
+    "guid": null,
+    "firedBy": [],
+    "listenedBy": [
+     [
+      "Pat",
+      "checkEventPattern"
+     ]
+    ],
+    "isGoal": false,
+    "isProgress": false,
+    "progress": null,
+    "inGoalClosure": true,
+    "depth": 2,
+    "count": 1,
+    "origin": "external",
+    "args": []
+   },
+   "pat:ok": {
+    "key": "pat:ok",
+    "name": "pat:ok",
+    "scope": "app",
+    "entity": null,
+    "guid": null,
+    "firedBy": [
+     [
+      "Pat",
+      "checkEventPattern",
+      "eventToEmitOnCorrect"
+     ]
+    ],
+    "listenedBy": [
+     [
+      "Fin",
+      "eventFlagChecker"
+     ]
+    ],
+    "isGoal": false,
+    "isProgress": false,
+    "progress": null,
+    "inGoalClosure": true,
+    "depth": 1,
+    "count": 1,
+    "origin": "derived",
+    "args": []
+   }
+  },
+  "edges": [
+   {
+    "entity": "Seq",
+    "guid": "s",
+    "script": "checkEventSequence",
+    "outKey": "seq:ok",
+    "outAttr": "eventToEmitOnCorrect",
+    "needs": [
+     {
+      "key": "a:1",
+      "attr": "sequence[2]",
+      "count": 2,
+      "args": null
+     },
+     {
+      "key": "b:2",
+      "attr": "sequence[1]",
+      "count": 1,
+      "args": null
+     }
+    ]
+   },
+   {
+    "entity": "Seq",
+    "guid": "s",
+    "script": "checkEventSequence",
+    "outKey": "seq:half",
+    "outAttr": "progressEvents[1]",
+    "needs": [
+     {
+      "key": "a:1",
+      "attr": "sequence[2]",
+      "count": 1,
+      "args": null
+     },
+     {
+      "key": "b:2",
+      "attr": "sequence[1]",
+      "count": 1,
+      "args": null
+     }
+    ]
+   },
+   {
+    "entity": "Pat",
+    "guid": "p",
+    "script": "checkEventPattern",
+    "outKey": "pat:ok",
+    "outAttr": "eventToEmitOnCorrect",
+    "needs": [
+     {
+      "key": "x:1",
+      "attr": "requiredEvents[0]",
+      "count": 1,
+      "args": null
+     },
+     {
+      "key": "z:1",
+      "attr": "requiredEvents[1]",
+      "count": 1,
+      "args": null
+     },
+     {
+      "key": "pat:go",
+      "attr": "confirmEvent",
+      "count": 1,
+      "args": null
+     }
+    ]
+   },
+   {
+    "entity": "Fin",
+    "guid": "f",
+    "script": "eventFlagChecker",
+    "outKey": "quest:complete",
+    "outAttr": "allTrueEvent",
+    "needs": [
+     {
+      "key": "seq:ok",
+      "attr": "events[0].setTrueEvent",
+      "count": 1,
+      "args": null
+     },
+     {
+      "key": "pat:ok",
+      "attr": "events[1].setTrueEvent",
+      "count": 1,
+      "args": null
+     }
+    ]
+   }
+  ],
+  "interactables": [],
+  "closureKeys": [
+   "quest:complete",
+   "a:1",
+   "b:2",
+   "seq:ok",
+   "x:1",
+   "z:1",
+   "pat:go",
+   "pat:ok"
+  ],
+  "closureOrder": [
+   "a:1",
+   "b:2",
+   "pat:go",
+   "x:1",
+   "z:1",
+   "pat:ok",
+   "seq:ok",
+   "quest:complete"
+  ],
+  "objectiveNames": [],
+  "objectiveGuids": [],
+  "entityCount": 4
+ }
+}

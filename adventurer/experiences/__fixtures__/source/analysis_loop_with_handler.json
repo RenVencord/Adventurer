@@ -1,0 +1,216 @@
+{
+ "name": "loop_with_handler",
+ "scan": {
+  "ok": true,
+  "scene": "Game",
+  "applicationId": "42",
+  "entities": [
+   {
+    "guid": "t",
+    "name": "T",
+    "path": "Root/T",
+    "enabled": true,
+    "tags": [],
+    "pos": [
+     0,
+     0,
+     0
+    ],
+    "scripts": [
+     {
+      "name": "ticker",
+      "enabled": true,
+      "attrs": {}
+     },
+     {
+      "name": "quest",
+      "enabled": true,
+      "attrs": {}
+     }
+    ]
+   }
+  ],
+  "scripts": {
+   "ticker": {
+    "n": 1,
+    "names": [
+     "_tick",
+     "update"
+    ],
+    "m": {
+     "update": {
+      "c": [
+       "_tick"
+      ]
+     },
+     "_tick": {
+      "f": [
+       "tick:x"
+      ]
+     }
+    }
+   },
+   "quest": {
+    "n": 1,
+    "names": [
+     "_onPlay",
+     "_onTick",
+     "initialize"
+    ],
+    "m": {
+     "initialize": {
+      "o": [
+       [
+        "tick:x",
+        "_onTick",
+        "a"
+       ],
+       [
+        "menu:play",
+        "_onPlay",
+        "a"
+       ]
+      ],
+      "r": [
+       "_onTick",
+       "_onPlay"
+      ]
+     },
+     "_onTick": {
+      "f": [
+       "arise:questComplete"
+      ]
+     },
+     "_onPlay": {
+      "f": [
+       "tick:x"
+      ]
+     }
+    }
+   }
+  },
+  "listeners": {},
+  "truncated": {}
+ },
+ "knowledge": null,
+ "expected": {
+  "source": {
+   "available": true,
+   "found": true,
+   "scriptTypes": 2,
+   "listeners": 0,
+   "unattributed": 0,
+   "goal": "arise:questComplete",
+   "goals": [
+    {
+     "key": "arise:questComplete",
+     "strength": 3,
+     "learned": false
+    }
+   ],
+   "unreachedGoals": [],
+   "events": [
+    {
+     "key": "arise:questComplete",
+     "name": "arise:questComplete",
+     "scope": "app",
+     "entity": null,
+     "depth": 0,
+     "root": false
+    },
+    {
+     "key": "tick:x",
+     "name": "tick:x",
+     "scope": "app",
+     "entity": null,
+     "depth": 1,
+     "root": false
+    },
+    {
+     "key": "menu:play",
+     "name": "menu:play",
+     "scope": "app",
+     "entity": null,
+     "depth": 2,
+     "root": true
+    }
+   ],
+   "hops": [
+    {
+     "src": "tick:x",
+     "dst": "arise:questComplete",
+     "how": "static",
+     "ambiguous": false,
+     "approximate": false,
+     "path": "quest._onTick",
+     "steps": [
+      {
+       "script": "quest",
+       "entity": "T",
+       "method": "_onTick",
+       "inst": 1,
+       "how": "handler",
+       "approximate": false
+      }
+     ]
+    },
+    {
+     "src": "menu:play",
+     "dst": "tick:x",
+     "how": "static",
+     "ambiguous": false,
+     "approximate": false,
+     "path": "quest._onPlay",
+     "steps": [
+      {
+       "script": "quest",
+       "entity": "T",
+       "method": "_onPlay",
+       "inst": 1,
+       "how": "handler",
+       "approximate": false
+      }
+     ]
+    }
+   ],
+   "owners": [],
+   "guards": [],
+   "entries": [
+    {
+     "name": "tick:x",
+     "depth": 1,
+     "approximate": false,
+     "guardOk": null,
+     "fields": {},
+     "note": ""
+    }
+   ],
+   "preferred": "",
+   "triggerNotes": [
+    "trigger menu:play (start/play/select style, score 5)"
+   ],
+   "notes": []
+  },
+  "recipe": {
+   "version": 1,
+   "goal": "arise:questComplete",
+   "triggers": [
+    "menu:play"
+   ],
+   "entries": [
+    {
+     "name": "tick:x",
+     "scope": "app",
+     "args": [],
+     "source": "inferred"
+    }
+   ],
+   "suppress": [
+    "leaderboard"
+   ],
+   "delay_ms": 0,
+   "notes": "arise:questComplete is fired by quest._onTick, reached from tick:x via quest._onTick. Entries are in goal-upward order (closest to the goal first); no guard with a known writer was found, so no entry is preferred.",
+   "source": "guessed"
+  }
+ }
+}

@@ -1,0 +1,534 @@
+{
+ "SCRIPT_EVENTS": {
+  "discordQuestManager": {
+   "questCompleteEvent": "listen",
+   "questProgressEvent": "listen",
+   "progressEvents[].event": "listen"
+  },
+  "timelinePlayer": {
+   "completeEvent": "fire"
+  },
+  "addItemToInventoryOnEvent": {
+   "eventName": "listen"
+  },
+  "badgeManger": {
+   "badges[].event": "listen"
+  },
+  "titleManager": {
+   "titles[].event": "listen"
+  },
+  "cameraPathNode": {
+   "continueEvent": "listen",
+   "arrivalEvent": "fire"
+  },
+  "cameraPathNodeJunction": {
+   "paths[].switchEvent": "listen"
+  },
+  "cameraPath": {
+   "startCameraPathEvent": "listen"
+  },
+  "cameraPoi": {
+   "events.onClickPoiEvent": "fire",
+   "events.onArriveAtPoiEvent": "fire",
+   "events.onLeavePoiEvent": "fire"
+  },
+  "changeCursorOnEvent": {
+   "event": "listen"
+  },
+  "changeUrlOnEvent": {
+   "navigateToUrlEvent": "listen"
+  },
+  "checkCodeOnEvent": {
+   "eventToCheckOn": "listen",
+   "eventToEmitOnCorrect": "fire",
+   "eventToEmitOnIncorrect": "fire"
+  },
+  "checkEventPattern": {
+   "onEvents[]": "listen",
+   "offEvents[]": "listen",
+   "requiredEvents[]": "listen",
+   "confirmEvent": "listen",
+   "eventToEmitOnCorrect": "fire",
+   "eventToEmitOnIncorrect": "fire",
+   "resetEvent": "listen",
+   "enableEvent": "listen",
+   "disableEvent": "listen"
+  },
+  "checkEventSequence": {
+   "sequence[]": "listen",
+   "eventToEmitOnCorrect": "fire",
+   "eventToEmitOnIncorrect": "fire",
+   "progressEvents[]": "fire",
+   "resetEvent": "listen",
+   "enableEvent": "listen",
+   "disableEvent": "listen"
+  },
+  "changePoiAttributesOnEvent": {
+   "eventName": "listen"
+  },
+  "changeItemAttributesOnEvent": {
+   "eventName": "listen"
+  },
+  "checkMultipleFlags": {
+   "checkOnEvent": "listen",
+   "eventToFireOnCheckPassed": "fire",
+   "eventToFireOnCheckFailed": "fire"
+  },
+  "checkpointManager": {
+   "checkpoints[].triggerEvent": "listen"
+  },
+  "collectable": {
+   "collectedEvent": "fire"
+  },
+  "scoreable": {
+   "collectedEvent": "fire"
+  },
+  "collectablesManager": {
+   "collectables[].allCollectedEvent": "fire"
+  },
+  "controlVideoOnEvent": {
+   "playEvent": "listen",
+   "pauseEvent": "listen",
+   "stopEvent": "listen",
+   "muteEvent": "listen",
+   "unmuteEvent": "listen",
+   "preloadEvent": "listen",
+   "seekEvent": "listen",
+   "volumeEvent": "listen",
+   "loopEvent": "listen",
+   "videoLoadedEvent": "listen",
+   "videoEndedEvent": "listen",
+   "videoControlEvent": "fire",
+   "refireLoadedAs": "fire",
+   "refireEndedAs": "fire"
+  },
+  "countEvents": {
+   "eventToCount": "listen",
+   "counts[].eventToFireOnCountMet": "fire"
+  },
+  "destroyEntityOnEvent": {
+   "destroyEvents[].eventName": "listen"
+  },
+  "door": {
+   "onLockEvent": "listen",
+   "onUnlockEvent": "listen",
+   "onOpenEvent": "listen",
+   "onCloseEvent": "listen",
+   "doorOpenedEvent": "fire",
+   "doorClosedEvent": "fire",
+   "doorUnlockedEvent": "fire",
+   "doorLockedEvent": "fire"
+  },
+  "enableCameraControlsOnEvent": {
+   "eventConfigs[].eventName": "listen"
+  },
+  "enableInteractionInputOnEvent": {
+   "eventConfigs[].eventName": "listen"
+  },
+  "enableCollidersOnEvent": {
+   "colliderEvents[].enableEvent": "listen"
+  },
+  "enableScriptOnEvent": {
+   "scriptEvents[].enableEvent": "listen"
+  },
+  "enableEntitiesOnEvent": {
+   "enableEvents[].enableEvent": "listen"
+  },
+  "uiSetInputEnabledOnEvent": {
+   "inputEvents[].enableEvent": "listen"
+  },
+  "eventFlagChecker": {
+   "allTrueEvent": "fire",
+   "events[].checkFlagEvent": "listen",
+   "events[].onTrueEvent": "fire",
+   "events[].onFalseEvent": "fire",
+   "events[].setTrueEvent": "listen",
+   "events[].setFalseEvent": "listen"
+  },
+  "eventRelay": {
+   "triggerEvents[]": "listen",
+   "eventsToSend[].eventToSend": "fire"
+  },
+  "fireEventOnSettingBool": {
+   "trueEvent": "fire",
+   "falseEvent": "fire"
+  },
+  "fireRandomEventOnEvent": {
+   "triggerEvents[]": "listen",
+   "outputEvents[].eventName": "fire"
+  },
+  "focusItem": {
+   "events.onFocusingEvent": "fire",
+   "events.onFocusedEvent": "fire",
+   "events.onReturningEvent": "fire",
+   "events.onReturnedEvent": "fire"
+  },
+  "focusItemManager": {
+   "events.onFocusEvent": "fire",
+   "events.onFocusedEvent": "fire",
+   "events.onUnfocusEvent": "fire",
+   "events.onUnfocusedEvent": "fire",
+   "events.onTakeItemEvent": "fire",
+   "events.onUseItemEvent": "fire"
+  },
+  "focusItemTakeable": {
+   "takeEvent": "fire"
+  },
+  "focusItemUsable": {
+   "useEvent": "fire",
+   "onUseCompleteEvent": "listen"
+  },
+  "holographicReveal": {
+   "revealEvent": "listen",
+   "resetEvent": "listen",
+   "completeEvent": "fire"
+  },
+  "inventoryDragHandler": {
+   "onDragStartEvent": "fire",
+   "onDragEndEvent": "fire"
+  },
+  "inventorySystem": {
+   "itemAddedEvent": "fire",
+   "itemRemovedEvent": "fire",
+   "clearInventoryEvent": "listen"
+  },
+  "keypad": {
+   "keysEvents[]": "listen",
+   "keyDeleteEvent": "listen",
+   "keyClearEvent": "listen",
+   "keyEnterEvent": "listen",
+   "submitCodeEvent": "fire",
+   "onKeyPressedEvent": "fire",
+   "onCodeSubmitEvent": "fire"
+  },
+  "linkOutOnEvent": {
+   "outlinks[].event": "listen"
+  },
+  "loadAssetsOnEvent": {
+   "assetEvents[].eventToStart": "listen",
+   "assetEvents[].eventToFireOnComplete": "fire"
+  },
+  "moveToPoiOnEvent": {
+   "eventName": "listen"
+  },
+  "multiPositionSwitch": {
+   "onPowerEvent": "listen",
+   "onSwitchPositionEvent": "fire",
+   "positions[].eventToFireAtPosition": "fire"
+  },
+  "lookAtEntity": {
+   "startLookingEvent": "listen",
+   "stopLookingEvent": "listen",
+   "setTargetEvent": "listen",
+   "immediateStopEvent": "listen",
+   "onStartLookingEvent": "fire",
+   "onReachedTargetEvent": "fire",
+   "onStoppedLookingEvent": "fire"
+  },
+  "playAudioOnEvent": {
+   "events[].playEvents[]": "listen",
+   "loop.stopEvents[]": "listen"
+  },
+  "playPfxOnEvent": {
+   "playEvents[].playEvent": "listen"
+  },
+  "stopPfxOnEvent": {
+   "stopEvents[].stopEvent": "listen"
+  },
+  "newsFeedManager": {
+   "newsEvents[].fireOnEvent": "listen"
+  },
+  "pushButton": {
+   "onPowerEvent": "listen",
+   "turnPowerOnEvent": "listen",
+   "turnPowerOffEvent": "listen",
+   "onPushEvent": "fire",
+   "onDownEvent": "fire",
+   "onUpEvent": "fire"
+  },
+  "randomlyFireEvent": {
+   "startEvent": "listen",
+   "stopEvent": "listen",
+   "events[]": "fire"
+  },
+  "reparentEntitiesOnEvent": {
+   "reparentEvents[].reparentEvent": "listen"
+  },
+  "refreshOnEvent": {
+   "eventName": "listen"
+  },
+  "refreshTranslationsOnEvent": {
+   "eventName": "listen"
+  },
+  "saveOnEvent": {
+   "eventToListenFor": "listen"
+  },
+  "sendEventOnClickCollider": {
+   "mouseDownEvent": "fire",
+   "mouseUpEvent": "fire"
+  },
+  "sendEventOnBreakPoint": {
+   "breakPoints[].eventName": "fire"
+  },
+  "sendEventOnCodeCorrect": {
+   "listenForCodeEvent": "listen",
+   "codeEvents[].enableCodeCheckingEvent": "listen",
+   "codeEvents[].disableCodeCheckingEvent": "listen",
+   "codeEvents[].eventToSendOnCorrect": "fire"
+  },
+  "sendEventOnEntityAngle": {
+   "events[].startCheckingEvent": "listen",
+   "events[].stopCheckingEvent": "listen",
+   "events[].checkOnEvent": "listen",
+   "events[].eventToFire": "fire"
+  },
+  "sendEventOnRollover": {
+   "eventName": "fire"
+  },
+  "sendEventOnTrigger": {
+   "events[].onTargetEnterEvent": "fire",
+   "events[].onTargetExitEvent": "fire",
+   "events[].onTargetStayEvent": "fire"
+  },
+  "setScreenComponentValuesOnEvent": {
+   "eventsToListen[].eventName": "listen"
+  },
+  "setSpriteOnEvent": {
+   "events[].event": "listen"
+  },
+  "uiSetSpriteOnEvent": {
+   "events[].event": "listen"
+  },
+  "uiSetImageOnEvent": {
+   "events[].event": "listen"
+  },
+  "uiSetTextOnEvent": {
+   "events[].event": "listen"
+  },
+  "triggerAnimationOnEvent": {
+   "events[].event": "listen"
+  },
+  "swapMaterialOnEvent": {
+   "materialSwapEvents[].event": "listen"
+  },
+  "shareExperienceOnEvent": {
+   "eventName": "listen"
+  },
+  "showNewsfeedOnEvent": {
+   "events[].event": "listen"
+  },
+  "viewMediaOnEvent": {
+   "events[].event": "listen"
+  },
+  "resetFirstPersonCameraControllerOnEvent": {
+   "events[].event": "listen"
+  },
+  "sendAnalyticsOnEvent": {
+   "events[].triggerEvent": "listen"
+  },
+  "slider": {
+   "enabledEvent": "listen",
+   "moveToEvent": "listen",
+   "movedEvent": "fire"
+  },
+  "snappingSlider": {
+   "enabledEvent": "listen",
+   "movedEvent": "fire",
+   "snapPositions[].eventToFireAtPosition": "fire"
+  },
+  "snappingDial": {
+   "crossedSnapAngleEvent": "fire",
+   "movedEvent": "fire",
+   "snapAngles[].eventToFireAtAngle": "fire"
+  },
+  "spawnEntityOnEvent": {
+   "eventName": "listen"
+  },
+  "spinEntity": {
+   "startSpinEvent": "listen",
+   "stopSpinEvent": "listen",
+   "immediateStopEvent": "listen",
+   "onStartWarmUpEvent": "fire",
+   "onStartSpinEvent": "fire",
+   "onStartCoolDownEvent": "fire",
+   "onStopSpinEvent": "fire"
+  },
+  "spineSetAnimationOnEvent": {
+   "setAnimationEvents[].eventName": "listen"
+  },
+  "textDisplay": {
+   "showTextEvent": "listen",
+   "scrollTextStartEvent": "listen",
+   "scrollTextStopEvent": "listen"
+  },
+  "togglePhysicsModeOnEvent": {
+   "physicsEvents[].eventName": "listen",
+   "physicsEvents[].onCompleteEvent": "fire"
+  },
+  "timer": {
+   "timeEvents[].eventName": "fire",
+   "globalStartEvent": "listen",
+   "globalStopEvent": "listen",
+   "globalPauseEvent": "listen",
+   "globalResumeEvent": "listen",
+   "globalResetEvent": "listen"
+  },
+  "toggleSwitch": {
+   "onPowerEvent": "listen",
+   "switchOnEvent": "listen",
+   "switchOffEvent": "listen",
+   "receiveSwitchOnEvent": "listen",
+   "receiveSwitchOffEvent": "listen",
+   "onSwitchEvent": "fire",
+   "switchedOnEvent": "fire",
+   "switchedOffEvent": "fire"
+  },
+  "triggerPoiBackOnEvent": {
+   "eventToTriggerBackButton": "listen"
+  },
+  "tweenAmbientIntensityOnEvent": {
+   "eventName": "listen"
+  },
+  "tweenExposureOnEvent": {
+   "eventName": "listen"
+  },
+  "unfocusAllItemsOnEvent": {
+   "eventName": "listen"
+  },
+  "registerForDiscordBot": {
+   "eventName": "listen"
+  },
+  "uiSendEvent": {
+   "clickEvent": "fire",
+   "enterEvent": "fire",
+   "leaveEvent": "fire"
+  },
+  "uiSpriteAnim": {
+   "playEvent": "listen",
+   "stopEvent": "listen",
+   "pauseEvent": "listen",
+   "resumeEvent": "listen",
+   "onCompleteEvent": "fire"
+  },
+  "useItem": {
+   "eventOnCorrectItemUsed": "fire",
+   "eventOnIncorrectItemUsed": "fire",
+   "eventOnCorrectItemHover": "fire",
+   "eventOnCorrectItemLeave": "fire",
+   "validItems[].eventOnCorrectItemUsed": "fire",
+   "validItems[].eventOnCorrectItemHover": "fire",
+   "validItems[].eventOnCorrectItemLeave": "fire"
+  },
+  "videoStreamController": {
+   "controlEvent": "listen",
+   "loadedEvent": "fire",
+   "endedEvent": "fire",
+   "cues[].name": "fire"
+  },
+  "playTimelineOnEvent": {
+   "timelineConfigs[].playEvent": "listen",
+   "timelineConfigs[].pauseEvent": "listen",
+   "timelineConfigs[].stopEvent": "listen",
+   "timelineConfigs[].completeEvent": "fire"
+  }
+ },
+ "LEAF_SCRIPTS": [
+  "cameraFovTween",
+  "entityShake",
+  "fadeAudioOnEvent",
+  "imageSizeTween",
+  "lightColorTween",
+  "lightFlicker",
+  "lightIntensityTween",
+  "materialEmissiveTween",
+  "materialOpacityTween",
+  "positionTween",
+  "rotationTween",
+  "scaleTween",
+  "spriteOpacityTween",
+  "spriteSizeTween",
+  "textEffectsGlowTween",
+  "textEffectsGradientOpacityTween",
+  "textEffectsOutlineTween",
+  "textEffectsShadowTween",
+  "uiBlurTween",
+  "uiColorTween",
+  "uiOpacityTween"
+ ],
+ "LEAF_LISTEN": [
+  "checkFlagEvent",
+  "checkOnEvent",
+  "disableEvent",
+  "enableEvent",
+  "event",
+  "eventName",
+  "eventToCheckOn",
+  "eventToCount",
+  "eventToStart",
+  "fireOnEvent",
+  "pauseEvent",
+  "playEvent",
+  "playEvents",
+  "reparentEvent",
+  "resetEvent",
+  "resumeEvent",
+  "setFalseEvent",
+  "setTrueEvent",
+  "startCheckingEvent",
+  "startEvent",
+  "startFlickerEvent",
+  "startTweenEvent",
+  "stopAllShakesEvent",
+  "stopAllTweensEvent",
+  "stopCheckingEvent",
+  "stopEvent",
+  "stopEvents",
+  "stopFlickerEvent",
+  "switchEvent",
+  "triggerEvent",
+  "triggerEvents"
+ ],
+ "LEAF_FIRE": [
+  "allCollectedEvent",
+  "completeEvent",
+  "eventToEmitOnCorrect",
+  "eventToEmitOnIncorrect",
+  "eventToFire",
+  "eventToFireAtAngle",
+  "eventToFireAtPosition",
+  "eventToFireOnComplete",
+  "eventToFireOnCountMet",
+  "eventToSend",
+  "eventToSendOnCorrect",
+  "onCompleteEvent",
+  "onFalseEvent",
+  "onStartEvent",
+  "onStopEvent",
+  "onTargetEnterEvent",
+  "onTargetExitEvent",
+  "onTargetStayEvent",
+  "onTrueEvent"
+ ],
+ "INTERACTABLE_SCRIPTS": [
+  "collectable",
+  "door",
+  "focusItem",
+  "focusItemNestable",
+  "focusItemTakeable",
+  "focusItemUsable",
+  "itemManipulator",
+  "keypad",
+  "multiPositionSwitch",
+  "pushButton",
+  "scoreable",
+  "sendEventOnClickCollider",
+  "slider",
+  "snappingDial",
+  "snappingSlider",
+  "toggleSwitch",
+  "uiSendEvent",
+  "useItem"
+ ],
+ "QUEST_SCRIPT": "discordQuestManager",
+ "MAX_COUNT": 1000
+}

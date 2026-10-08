@@ -1,0 +1,272 @@
+{
+ "name": "door_power",
+ "scan": {
+  "ok": true,
+  "entities": [
+   {
+    "guid": "q",
+    "name": "Quest Manager",
+    "path": "Root/Quest Manager",
+    "enabled": true,
+    "tags": [],
+    "pos": [
+     0,
+     0,
+     0
+    ],
+    "scripts": [
+     {
+      "name": "discordQuestManager",
+      "enabled": true,
+      "attrs": {
+       "questCompleteEvent": "quest:complete",
+       "questProgressEvent": "quest:progress",
+       "enableDebugLogs": false,
+       "progressEvents": []
+      }
+     }
+    ]
+   },
+   {
+    "guid": "d",
+    "name": "Door",
+    "path": "Root/Door",
+    "enabled": true,
+    "tags": [],
+    "pos": [
+     0,
+     0,
+     0
+    ],
+    "scripts": [
+     {
+      "name": "door",
+      "enabled": true,
+      "attrs": {
+       "isLocked": true,
+       "onUnlockEvent": "door:unlock",
+       "doorOpenedEvent": "quest:complete"
+      }
+     }
+    ]
+   },
+   {
+    "guid": "s",
+    "name": "Switch",
+    "path": "Root/Switch",
+    "enabled": true,
+    "tags": [],
+    "pos": [
+     0,
+     0,
+     0
+    ],
+    "scripts": [
+     {
+      "name": "pushButton",
+      "enabled": true,
+      "attrs": {
+       "hasPower": false,
+       "onPowerEvent": "power:on",
+       "onPushEvent": "door:unlock"
+      }
+     }
+    ]
+   }
+  ]
+ },
+ "expected": {
+  "ok": true,
+  "hasQuestManager": true,
+  "scene": "",
+  "goalEvents": [
+   "quest:complete"
+  ],
+  "progressEvents": [
+   {
+    "event": "quest:progress",
+    "key": "quest:progress",
+    "progress": null
+   }
+  ],
+  "rootKeys": [
+   "quest:complete"
+  ],
+  "eventOrder": [
+   "quest:complete",
+   "quest:progress",
+   "door:unlock",
+   "power:on"
+  ],
+  "events": {
+   "quest:complete": {
+    "key": "quest:complete",
+    "name": "quest:complete",
+    "scope": "app",
+    "entity": null,
+    "guid": null,
+    "firedBy": [
+     [
+      "Door",
+      "door",
+      "doorOpenedEvent"
+     ]
+    ],
+    "listenedBy": [
+     [
+      "Quest Manager",
+      "discordQuestManager"
+     ]
+    ],
+    "isGoal": true,
+    "isProgress": false,
+    "progress": null,
+    "inGoalClosure": true,
+    "depth": 0,
+    "count": 1,
+    "origin": "interaction",
+    "args": []
+   },
+   "quest:progress": {
+    "key": "quest:progress",
+    "name": "quest:progress",
+    "scope": "app",
+    "entity": null,
+    "guid": null,
+    "firedBy": [],
+    "listenedBy": [
+     [
+      "Quest Manager",
+      "discordQuestManager"
+     ]
+    ],
+    "isGoal": false,
+    "isProgress": true,
+    "progress": null,
+    "inGoalClosure": false,
+    "depth": null,
+    "count": 1,
+    "origin": "",
+    "args": []
+   },
+   "door:unlock": {
+    "key": "door:unlock",
+    "name": "door:unlock",
+    "scope": "app",
+    "entity": null,
+    "guid": null,
+    "firedBy": [
+     [
+      "Switch",
+      "pushButton",
+      "onPushEvent"
+     ]
+    ],
+    "listenedBy": [
+     [
+      "Door",
+      "door"
+     ]
+    ],
+    "isGoal": false,
+    "isProgress": false,
+    "progress": null,
+    "inGoalClosure": true,
+    "depth": 1,
+    "count": 1,
+    "origin": "interaction",
+    "args": []
+   },
+   "power:on": {
+    "key": "power:on",
+    "name": "power:on",
+    "scope": "app",
+    "entity": null,
+    "guid": null,
+    "firedBy": [],
+    "listenedBy": [
+     [
+      "Switch",
+      "pushButton"
+     ]
+    ],
+    "isGoal": false,
+    "isProgress": false,
+    "progress": null,
+    "inGoalClosure": false,
+    "depth": null,
+    "count": 1,
+    "origin": "",
+    "args": []
+   }
+  },
+  "edges": [
+   {
+    "entity": "Door",
+    "guid": "d",
+    "script": "door",
+    "outKey": "quest:complete",
+    "outAttr": "doorOpenedEvent",
+    "needs": [
+     {
+      "key": "door:unlock",
+      "attr": "onUnlockEvent",
+      "count": 1,
+      "args": null
+     }
+    ]
+   },
+   {
+    "entity": "Switch",
+    "guid": "s",
+    "script": "pushButton",
+    "outKey": "door:unlock",
+    "outAttr": "onPushEvent",
+    "needs": []
+   }
+  ],
+  "interactables": [
+   {
+    "entity": "Door",
+    "guid": "d",
+    "tags": [],
+    "scripts": [
+     "door"
+    ],
+    "fires": [
+     "quest:complete"
+    ],
+    "inClosure": true
+   },
+   {
+    "entity": "Switch",
+    "guid": "s",
+    "tags": [],
+    "scripts": [
+     "pushButton"
+    ],
+    "fires": [
+     "door:unlock"
+    ],
+    "inClosure": true
+   }
+  ],
+  "closureKeys": [
+   "quest:complete",
+   "door:unlock"
+  ],
+  "closureOrder": [
+   "door:unlock",
+   "quest:complete"
+  ],
+  "objectiveNames": [
+   "Door",
+   "Switch"
+  ],
+  "objectiveGuids": [
+   "d",
+   "s"
+  ],
+  "entityCount": 3
+ }
+}

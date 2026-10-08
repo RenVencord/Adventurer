@@ -1,0 +1,155 @@
+{
+ "name": "aim_no_quest_manager",
+ "scan": {
+  "ok": true,
+  "scene": "GlobalAces_MASTER",
+  "applicationId": "1536318183873454090",
+  "entities": [
+   {
+    "guid": "d",
+    "name": "Shot Director",
+    "path": "Root/Shot Director",
+    "enabled": true,
+    "tags": [],
+    "pos": [
+     0,
+     0,
+     0
+    ],
+    "scripts": [
+     {
+      "name": "shotBeat",
+      "enabled": true,
+      "attrs": {
+       "interval": 0.5,
+       "onBeat": "shot:beat"
+      }
+     }
+    ]
+   },
+   {
+    "guid": "e",
+    "name": "Enemy",
+    "path": "Root/Enemy",
+    "enabled": true,
+    "tags": [
+     "enemy"
+    ],
+    "pos": [
+     0,
+     0,
+     0
+    ],
+    "scripts": [
+     {
+      "name": "universalEnemy",
+      "enabled": true,
+      "attrs": {
+       "hitEvent": "enemy:hit",
+       "health": 3
+      }
+     }
+    ]
+   }
+  ],
+  "listeners": {
+   "enemy:hit": [
+    {
+     "guid": "d",
+     "script": "shotBeat",
+     "scopeKind": "entity",
+     "target": "app"
+    }
+   ]
+  }
+ },
+ "expected": {
+  "ok": true,
+  "hasQuestManager": false,
+  "scene": "GlobalAces_MASTER",
+  "goalEvents": [],
+  "progressEvents": [],
+  "rootKeys": [],
+  "eventOrder": [
+   "shot:beat",
+   "enemy:hit"
+  ],
+  "events": {
+   "shot:beat": {
+    "key": "shot:beat",
+    "name": "shot:beat",
+    "scope": "app",
+    "entity": null,
+    "guid": null,
+    "firedBy": [
+     [
+      "Shot Director",
+      "shotBeat",
+      "onBeat"
+     ]
+    ],
+    "listenedBy": [],
+    "isGoal": false,
+    "isProgress": false,
+    "progress": null,
+    "inGoalClosure": false,
+    "depth": null,
+    "count": 1,
+    "origin": "",
+    "args": []
+   },
+   "enemy:hit": {
+    "key": "enemy:hit",
+    "name": "enemy:hit",
+    "scope": "app",
+    "entity": null,
+    "guid": null,
+    "firedBy": [
+     [
+      "Enemy",
+      "universalEnemy",
+      "hitEvent"
+     ]
+    ],
+    "listenedBy": [
+     [
+      "Shot Director",
+      "shotBeat"
+     ]
+    ],
+    "isGoal": false,
+    "isProgress": false,
+    "progress": null,
+    "inGoalClosure": false,
+    "depth": null,
+    "count": 1,
+    "origin": "",
+    "args": []
+   }
+  },
+  "edges": [
+   {
+    "entity": "Shot Director",
+    "guid": "d",
+    "script": "shotBeat",
+    "outKey": "shot:beat",
+    "outAttr": "onBeat",
+    "needs": []
+   },
+   {
+    "entity": "Enemy",
+    "guid": "e",
+    "script": "universalEnemy",
+    "outKey": "enemy:hit",
+    "outAttr": "hitEvent",
+    "needs": []
+   }
+  ],
+  "interactables": [],
+  "closureKeys": [],
+  "closureOrder": [],
+  "objectiveNames": [],
+  "objectiveGuids": [],
+  "entityCount": 2
+ }
+}

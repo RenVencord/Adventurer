@@ -1,0 +1,312 @@
+{
+ "name": "generic_registry",
+ "scan": {
+  "ok": true,
+  "scene": "x",
+  "entities": [
+   {
+    "guid": "q",
+    "name": "Quest Manager",
+    "path": "Root/Quest Manager",
+    "enabled": true,
+    "tags": [],
+    "pos": [
+     0,
+     0,
+     0
+    ],
+    "scripts": [
+     {
+      "name": "discordQuestManager",
+      "enabled": true,
+      "attrs": {
+       "questCompleteEvent": "quest:complete",
+       "questProgressEvent": "quest:progress",
+       "enableDebugLogs": false,
+       "progressEvents": [
+        {
+         "event": "quest:progress:1",
+         "progress": 1
+        },
+        {
+         "event": "quest:progress:2",
+         "progress": 2
+        },
+        {
+         "event": "quest:progress:3",
+         "progress": 3
+        }
+       ]
+      }
+     }
+    ]
+   },
+   {
+    "guid": "g",
+    "name": "Gate",
+    "path": "Root/Gate",
+    "enabled": true,
+    "tags": [],
+    "pos": [
+     0,
+     0,
+     0
+    ],
+    "scripts": [
+     {
+      "name": "mysteryGate",
+      "enabled": true,
+      "attrs": {
+       "unlockOn": "button:pressed",
+       "openedEvent": "gate:open",
+       "label": "a:b c"
+      }
+     }
+    ]
+   }
+  ],
+  "truncated": {},
+  "listeners": {
+   "button:pressed": [
+    {
+     "guid": "g",
+     "script": "mysteryGate",
+     "scopeKind": "entity",
+     "target": "app"
+    }
+   ]
+  }
+ },
+ "expected": {
+  "ok": true,
+  "hasQuestManager": true,
+  "scene": "x",
+  "goalEvents": [
+   "quest:complete"
+  ],
+  "progressEvents": [
+   {
+    "event": "quest:progress",
+    "key": "quest:progress",
+    "progress": null
+   },
+   {
+    "event": "quest:progress:1",
+    "key": "quest:progress:1",
+    "progress": 1
+   },
+   {
+    "event": "quest:progress:2",
+    "key": "quest:progress:2",
+    "progress": 2
+   },
+   {
+    "event": "quest:progress:3",
+    "key": "quest:progress:3",
+    "progress": 3
+   }
+  ],
+  "rootKeys": [
+   "quest:progress:1",
+   "quest:progress:2",
+   "quest:progress:3"
+  ],
+  "eventOrder": [
+   "quest:complete",
+   "quest:progress",
+   "quest:progress:1",
+   "quest:progress:2",
+   "quest:progress:3",
+   "button:pressed",
+   "gate:open"
+  ],
+  "events": {
+   "quest:complete": {
+    "key": "quest:complete",
+    "name": "quest:complete",
+    "scope": "app",
+    "entity": null,
+    "guid": null,
+    "firedBy": [],
+    "listenedBy": [
+     [
+      "Quest Manager",
+      "discordQuestManager"
+     ]
+    ],
+    "isGoal": true,
+    "isProgress": false,
+    "progress": null,
+    "inGoalClosure": false,
+    "depth": null,
+    "count": 1,
+    "origin": "",
+    "args": []
+   },
+   "quest:progress": {
+    "key": "quest:progress",
+    "name": "quest:progress",
+    "scope": "app",
+    "entity": null,
+    "guid": null,
+    "firedBy": [],
+    "listenedBy": [
+     [
+      "Quest Manager",
+      "discordQuestManager"
+     ]
+    ],
+    "isGoal": false,
+    "isProgress": true,
+    "progress": null,
+    "inGoalClosure": false,
+    "depth": null,
+    "count": 1,
+    "origin": "",
+    "args": []
+   },
+   "quest:progress:1": {
+    "key": "quest:progress:1",
+    "name": "quest:progress:1",
+    "scope": "app",
+    "entity": null,
+    "guid": null,
+    "firedBy": [],
+    "listenedBy": [
+     [
+      "Quest Manager",
+      "discordQuestManager"
+     ]
+    ],
+    "isGoal": false,
+    "isProgress": true,
+    "progress": 1,
+    "inGoalClosure": true,
+    "depth": 0,
+    "count": 1,
+    "origin": "external",
+    "args": []
+   },
+   "quest:progress:2": {
+    "key": "quest:progress:2",
+    "name": "quest:progress:2",
+    "scope": "app",
+    "entity": null,
+    "guid": null,
+    "firedBy": [],
+    "listenedBy": [
+     [
+      "Quest Manager",
+      "discordQuestManager"
+     ]
+    ],
+    "isGoal": false,
+    "isProgress": true,
+    "progress": 2,
+    "inGoalClosure": true,
+    "depth": 0,
+    "count": 1,
+    "origin": "external",
+    "args": []
+   },
+   "quest:progress:3": {
+    "key": "quest:progress:3",
+    "name": "quest:progress:3",
+    "scope": "app",
+    "entity": null,
+    "guid": null,
+    "firedBy": [],
+    "listenedBy": [
+     [
+      "Quest Manager",
+      "discordQuestManager"
+     ]
+    ],
+    "isGoal": false,
+    "isProgress": true,
+    "progress": 3,
+    "inGoalClosure": true,
+    "depth": 0,
+    "count": 1,
+    "origin": "external",
+    "args": []
+   },
+   "button:pressed": {
+    "key": "button:pressed",
+    "name": "button:pressed",
+    "scope": "app",
+    "entity": null,
+    "guid": null,
+    "firedBy": [],
+    "listenedBy": [
+     [
+      "Gate",
+      "mysteryGate"
+     ]
+    ],
+    "isGoal": false,
+    "isProgress": false,
+    "progress": null,
+    "inGoalClosure": false,
+    "depth": null,
+    "count": 1,
+    "origin": "",
+    "args": []
+   },
+   "gate:open": {
+    "key": "gate:open",
+    "name": "gate:open",
+    "scope": "app",
+    "entity": null,
+    "guid": null,
+    "firedBy": [
+     [
+      "Gate",
+      "mysteryGate",
+      "openedEvent"
+     ]
+    ],
+    "listenedBy": [],
+    "isGoal": false,
+    "isProgress": false,
+    "progress": null,
+    "inGoalClosure": false,
+    "depth": null,
+    "count": 1,
+    "origin": "",
+    "args": []
+   }
+  },
+  "edges": [
+   {
+    "entity": "Gate",
+    "guid": "g",
+    "script": "mysteryGate",
+    "outKey": "gate:open",
+    "outAttr": "openedEvent",
+    "needs": [
+     {
+      "key": "button:pressed",
+      "attr": "unlockOn",
+      "count": 1,
+      "args": null
+     }
+    ]
+   }
+  ],
+  "interactables": [],
+  "closureKeys": [
+   "quest:progress:1",
+   "quest:progress:2",
+   "quest:progress:3"
+  ],
+  "closureOrder": [
+   "quest:progress:1",
+   "quest:progress:2",
+   "quest:progress:3"
+  ],
+  "objectiveNames": [],
+  "objectiveGuids": [],
+  "entityCount": 2
+ }
+}

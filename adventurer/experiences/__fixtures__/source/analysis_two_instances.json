@@ -1,0 +1,425 @@
+{
+ "name": "two_instances",
+ "scan": {
+  "ok": true,
+  "scene": "Game",
+  "applicationId": "42",
+  "entities": [
+   {
+    "guid": "h",
+    "name": "Hud",
+    "path": "Root/Hud",
+    "enabled": true,
+    "tags": [],
+    "pos": [
+     0,
+     0,
+     0
+    ],
+    "scripts": [
+     {
+      "name": "hud",
+      "enabled": true,
+      "attrs": {
+       "startEvent": "menu:play"
+      }
+     }
+    ]
+   },
+   {
+    "guid": "r",
+    "name": "Rounds",
+    "path": "Root/Rounds",
+    "enabled": true,
+    "tags": [],
+    "pos": [
+     0,
+     0,
+     0
+    ],
+    "scripts": [
+     {
+      "name": "rounds",
+      "enabled": true,
+      "attrs": {
+       "doneEvent": "round:end",
+       "winEvent": "round:win"
+      }
+     }
+    ]
+   },
+   {
+    "guid": "q",
+    "name": "Quest",
+    "path": "Root/Quest",
+    "enabled": true,
+    "tags": [],
+    "pos": [
+     0,
+     0,
+     0
+    ],
+    "scripts": [
+     {
+      "name": "quest",
+      "enabled": true,
+      "attrs": {}
+     }
+    ]
+   },
+   {
+    "guid": "r2",
+    "name": "Rounds B",
+    "path": "Root/Rounds B",
+    "enabled": true,
+    "tags": [],
+    "pos": [
+     0,
+     0,
+     0
+    ],
+    "scripts": [
+     {
+      "name": "rounds",
+      "enabled": true,
+      "attrs": {
+       "doneEvent": "bonus:end",
+       "winEvent": "round:win"
+      }
+     }
+    ]
+   }
+  ],
+  "scripts": {
+   "hud": {
+    "n": 1,
+    "names": [
+     "_onStart",
+     "initialize"
+    ],
+    "m": {
+     "initialize": {
+      "o": [
+       [
+        "@startEvent",
+        "_onStart",
+        "a"
+       ]
+      ]
+     },
+     "_onStart": {
+      "f": [
+       "round:begin"
+      ]
+     }
+    }
+   },
+   "rounds": {
+    "n": 1,
+    "names": [
+     "_begin",
+     "_onDone",
+     "_score",
+     "initialize"
+    ],
+    "m": {
+     "initialize": {
+      "o": [
+       [
+        "@doneEvent",
+        "_onDone",
+        "a"
+       ],
+       [
+        "round:begin",
+        "_begin",
+        "a"
+       ]
+      ],
+      "r": [
+       "_onDone",
+       "_begin"
+      ]
+     },
+     "_begin": {
+      "sw": [
+       "_active"
+      ]
+     },
+     "_onDone": {
+      "c": [
+       "_score"
+      ],
+      "pp": [
+       "_score"
+      ]
+     },
+     "_score": {
+      "f": [
+       "@winEvent"
+      ],
+      "pr": {
+       "points": "n",
+       "perfect": "b",
+       "tag": "s",
+       "list": "a",
+       "bag": "o",
+       "x": "?"
+      }
+     }
+    }
+   },
+   "quest": {
+    "n": 1,
+    "names": [
+     "_onWin",
+     "initialize"
+    ],
+    "m": {
+     "initialize": {
+      "o": [
+       [
+        "round:win",
+        "_onWin",
+        "a"
+       ]
+      ],
+      "r": [
+       "_onWin"
+      ]
+     },
+     "_onWin": {
+      "f": [
+       "arise:questComplete"
+      ]
+     }
+    }
+   }
+  },
+  "listeners": {},
+  "truncated": {}
+ },
+ "knowledge": null,
+ "expected": {
+  "source": {
+   "available": true,
+   "found": true,
+   "scriptTypes": 3,
+   "listeners": 0,
+   "unattributed": 0,
+   "goal": "arise:questComplete",
+   "goals": [
+    {
+     "key": "arise:questComplete",
+     "strength": 3,
+     "learned": false
+    }
+   ],
+   "unreachedGoals": [],
+   "events": [
+    {
+     "key": "arise:questComplete",
+     "name": "arise:questComplete",
+     "scope": "app",
+     "entity": null,
+     "depth": 0,
+     "root": false
+    },
+    {
+     "key": "round:win",
+     "name": "round:win",
+     "scope": "app",
+     "entity": null,
+     "depth": 1,
+     "root": false
+    },
+    {
+     "key": "round:end",
+     "name": "round:end",
+     "scope": "app",
+     "entity": null,
+     "depth": 2,
+     "root": true
+    },
+    {
+     "key": "bonus:end",
+     "name": "bonus:end",
+     "scope": "app",
+     "entity": null,
+     "depth": 2,
+     "root": true
+    }
+   ],
+   "hops": [
+    {
+     "src": "round:win",
+     "dst": "arise:questComplete",
+     "how": "static",
+     "ambiguous": false,
+     "approximate": false,
+     "path": "quest._onWin",
+     "steps": [
+      {
+       "script": "quest",
+       "entity": "Quest",
+       "method": "_onWin",
+       "inst": 2,
+       "how": "handler",
+       "approximate": false
+      }
+     ]
+    },
+    {
+     "src": "bonus:end",
+     "dst": "round:win",
+     "how": "static",
+     "ambiguous": false,
+     "approximate": false,
+     "path": "rounds._onDone -> _score",
+     "steps": [
+      {
+       "script": "rounds",
+       "entity": "Rounds B",
+       "method": "_onDone",
+       "inst": 3,
+       "how": "handler",
+       "approximate": false
+      },
+      {
+       "script": "rounds",
+       "entity": "Rounds B",
+       "method": "_score",
+       "inst": 3,
+       "how": "call",
+       "approximate": false
+      }
+     ]
+    },
+    {
+     "src": "round:end",
+     "dst": "round:win",
+     "how": "static",
+     "ambiguous": false,
+     "approximate": false,
+     "path": "rounds._onDone -> _score",
+     "steps": [
+      {
+       "script": "rounds",
+       "entity": "Rounds",
+       "method": "_onDone",
+       "inst": 1,
+       "how": "handler",
+       "approximate": false
+      },
+      {
+       "script": "rounds",
+       "entity": "Rounds",
+       "method": "_score",
+       "inst": 1,
+       "how": "call",
+       "approximate": false
+      }
+     ]
+    }
+   ],
+   "owners": [],
+   "guards": [],
+   "entries": [
+    {
+     "name": "round:win",
+     "depth": 1,
+     "approximate": false,
+     "guardOk": null,
+     "fields": {},
+     "note": ""
+    },
+    {
+     "name": "bonus:end",
+     "depth": 2,
+     "approximate": false,
+     "guardOk": null,
+     "fields": {
+      "points": "n",
+      "perfect": "b",
+      "tag": "s",
+      "list": "a",
+      "bag": "o",
+      "x": "?"
+     },
+     "note": ""
+    },
+    {
+     "name": "round:end",
+     "depth": 2,
+     "approximate": false,
+     "guardOk": null,
+     "fields": {
+      "points": "n",
+      "perfect": "b",
+      "tag": "s",
+      "list": "a",
+      "bag": "o",
+      "x": "?"
+     },
+     "note": ""
+    }
+   ],
+   "preferred": "",
+   "triggerNotes": [
+    "trigger menu:play (start/play/select style, score 3; next round:begin (2))"
+   ],
+   "notes": []
+  },
+  "recipe": {
+   "version": 1,
+   "goal": "arise:questComplete",
+   "triggers": [
+    "menu:play"
+   ],
+   "entries": [
+    {
+     "name": "round:win",
+     "scope": "app",
+     "args": [],
+     "source": "inferred"
+    },
+    {
+     "name": "bonus:end",
+     "scope": "app",
+     "args": [
+      {
+       "points": 0,
+       "perfect": false,
+       "tag": "",
+       "list": [],
+       "bag": {},
+       "x": 0
+      }
+     ],
+     "source": "inferred"
+    },
+    {
+     "name": "round:end",
+     "scope": "app",
+     "args": [
+      {
+       "points": 0,
+       "perfect": false,
+       "tag": "",
+       "list": [],
+       "bag": {},
+       "x": 0
+      }
+     ],
+     "source": "inferred"
+    }
+   ],
+   "suppress": [
+    "leaderboard"
+   ],
+   "delay_ms": 0,
+   "notes": "arise:questComplete is fired by quest._onWin, reached from round:win via quest._onWin. Entries are in goal-upward order (closest to the goal first); no guard with a known writer was found, so no entry is preferred.",
+   "source": "guessed"
+  }
+ }
+}

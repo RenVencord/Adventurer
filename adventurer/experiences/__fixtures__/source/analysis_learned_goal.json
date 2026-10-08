@@ -1,0 +1,152 @@
+{
+ "name": "learned_goal",
+ "scan": {
+  "ok": true,
+  "scene": "Game",
+  "applicationId": "42",
+  "entities": [
+   {
+    "guid": "q",
+    "name": "Q",
+    "path": "Root/Q",
+    "enabled": true,
+    "tags": [],
+    "pos": [
+     0,
+     0,
+     0
+    ],
+    "scripts": [
+     {
+      "name": "quest",
+      "enabled": true,
+      "attrs": {}
+     }
+    ]
+   }
+  ],
+  "scripts": {
+   "quest": {
+    "n": 1,
+    "names": [
+     "_onWin",
+     "initialize"
+    ],
+    "m": {
+     "initialize": {
+      "o": [
+       [
+        "round:win",
+        "_onWin",
+        "a"
+       ]
+      ]
+     },
+     "_onWin": {
+      "f": [
+       "bonus:unlocked"
+      ]
+     }
+    }
+   }
+  },
+  "listeners": {},
+  "truncated": {}
+ },
+ "knowledge": {
+  "goalNames": [
+   "bonus:unlocked"
+  ],
+  "optionalEvents": []
+ },
+ "expected": {
+  "source": {
+   "available": true,
+   "found": true,
+   "scriptTypes": 1,
+   "listeners": 0,
+   "unattributed": 0,
+   "goal": "bonus:unlocked",
+   "goals": [
+    {
+     "key": "bonus:unlocked",
+     "strength": 3,
+     "learned": true
+    }
+   ],
+   "unreachedGoals": [],
+   "events": [
+    {
+     "key": "bonus:unlocked",
+     "name": "bonus:unlocked",
+     "scope": "app",
+     "entity": null,
+     "depth": 0,
+     "root": false
+    },
+    {
+     "key": "round:win",
+     "name": "round:win",
+     "scope": "app",
+     "entity": null,
+     "depth": 1,
+     "root": true
+    }
+   ],
+   "hops": [
+    {
+     "src": "round:win",
+     "dst": "bonus:unlocked",
+     "how": "static",
+     "ambiguous": false,
+     "approximate": false,
+     "path": "quest._onWin",
+     "steps": [
+      {
+       "script": "quest",
+       "entity": "Q",
+       "method": "_onWin",
+       "inst": 0,
+       "how": "handler",
+       "approximate": false
+      }
+     ]
+    }
+   ],
+   "owners": [],
+   "guards": [],
+   "entries": [
+    {
+     "name": "round:win",
+     "depth": 1,
+     "approximate": false,
+     "guardOk": null,
+     "fields": {},
+     "note": ""
+    }
+   ],
+   "preferred": "",
+   "triggerNotes": [],
+   "notes": []
+  },
+  "recipe": {
+   "version": 1,
+   "goal": "bonus:unlocked",
+   "triggers": [],
+   "entries": [
+    {
+     "name": "round:win",
+     "scope": "app",
+     "args": [],
+     "source": "inferred"
+    }
+   ],
+   "suppress": [
+    "leaderboard"
+   ],
+   "delay_ms": 0,
+   "notes": "bonus:unlocked is fired by quest._onWin, reached from round:win via quest._onWin. Entries are in goal-upward order (closest to the goal first); no guard with a known writer was found, so no entry is preferred.",
+   "source": "guessed"
+  }
+ }
+}

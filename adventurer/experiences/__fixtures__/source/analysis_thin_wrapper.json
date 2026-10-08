@@ -1,0 +1,185 @@
+{
+ "name": "thin_wrapper",
+ "scan": {
+  "ok": true,
+  "scene": "Game",
+  "applicationId": "42",
+  "entities": [
+   {
+    "guid": "g",
+    "name": "G",
+    "path": "Root/G",
+    "enabled": true,
+    "tags": [],
+    "pos": [
+     0,
+     0,
+     0
+    ],
+    "scripts": [
+     {
+      "name": "gate",
+      "enabled": true,
+      "attrs": {}
+     }
+    ]
+   }
+  ],
+  "scripts": {
+   "gate": {
+    "n": 1,
+    "names": [
+     "_fireDone",
+     "_fireOther",
+     "_onGo",
+     "_onSave",
+     "_store",
+     "initialize"
+    ],
+    "m": {
+     "initialize": {
+      "o": [
+       [
+        "gate:run",
+        "_onGo",
+        "a"
+       ],
+       [
+        "gate:keep",
+        "_onSave",
+        "a"
+       ]
+      ],
+      "r": [
+       "_onGo",
+       "_onSave",
+       "_store"
+      ]
+     },
+     "_onGo": {
+      "w": 1
+     },
+     "_onSave": {
+      "c": [
+       "_store"
+      ]
+     },
+     "_store": {
+      "w": 1
+     },
+     "_fireDone": {
+      "f": [
+       "arise:questComplete"
+      ]
+     },
+     "_fireOther": {
+      "f": [
+       "gate:other"
+      ]
+     }
+    }
+   }
+  },
+  "listeners": {},
+  "truncated": {}
+ },
+ "knowledge": null,
+ "expected": {
+  "source": {
+   "available": true,
+   "found": true,
+   "scriptTypes": 1,
+   "listeners": 0,
+   "unattributed": 0,
+   "goal": "arise:questComplete",
+   "goals": [
+    {
+     "key": "arise:questComplete",
+     "strength": 3,
+     "learned": false
+    }
+   ],
+   "unreachedGoals": [],
+   "events": [
+    {
+     "key": "arise:questComplete",
+     "name": "arise:questComplete",
+     "scope": "app",
+     "entity": null,
+     "depth": 0,
+     "root": false
+    },
+    {
+     "key": "gate:run",
+     "name": "gate:run",
+     "scope": "app",
+     "entity": null,
+     "depth": 1,
+     "root": true
+    }
+   ],
+   "hops": [
+    {
+     "src": "gate:run",
+     "dst": "arise:questComplete",
+     "how": "static",
+     "ambiguous": false,
+     "approximate": true,
+     "path": "gate._onGo -> _fireDone (guess: hidden closure)",
+     "steps": [
+      {
+       "script": "gate",
+       "entity": "G",
+       "method": "_onGo",
+       "inst": 0,
+       "how": "handler",
+       "approximate": false
+      },
+      {
+       "script": "gate",
+       "entity": "G",
+       "method": "_fireDone",
+       "inst": 0,
+       "how": "guess",
+       "approximate": true
+      }
+     ]
+    }
+   ],
+   "owners": [],
+   "guards": [],
+   "entries": [
+    {
+     "name": "gate:run",
+     "depth": 1,
+     "approximate": true,
+     "guardOk": null,
+     "fields": {},
+     "note": ""
+    }
+   ],
+   "preferred": "",
+   "triggerNotes": [],
+   "notes": []
+  },
+  "recipe": {
+   "version": 1,
+   "goal": "arise:questComplete",
+   "triggers": [],
+   "entries": [
+    {
+     "name": "gate:run",
+     "scope": "app",
+     "args": [],
+     "source": "inferred"
+    }
+   ],
+   "suppress": [
+    "leaderboard"
+   ],
+   "delay_ms": 0,
+   "notes": "arise:questComplete is fired by gate._fireDone, reached from gate:run via gate._onGo -> _fireDone (guess: hidden closure). Entries are in goal-upward order (closest to the goal first); no guard with a known writer was found, so no entry is preferred. Some links are guesses through a hidden closure; verify with a recorded run.",
+   "source": "guessed"
+  }
+ }
+}

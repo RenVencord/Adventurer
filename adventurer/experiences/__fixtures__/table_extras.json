@@ -1,0 +1,786 @@
+{
+ "name": "table_extras",
+ "scan": {
+  "ok": true,
+  "scene": "extras",
+  "entities": [
+   {
+    "guid": "q",
+    "name": "Quest Manager",
+    "path": "Root/Quest Manager",
+    "enabled": true,
+    "tags": [],
+    "pos": [
+     0,
+     0,
+     0
+    ],
+    "scripts": [
+     {
+      "name": "discordQuestManager",
+      "enabled": true,
+      "attrs": {
+       "questCompleteEvent": "quest:complete",
+       "questProgressEvent": "quest:progress",
+       "enableDebugLogs": false,
+       "progressEvents": [
+        {
+         "event": "q:1",
+         "progress": 1
+        }
+       ]
+      }
+     }
+    ]
+   },
+   {
+    "guid": "b1",
+    "name": "Btn",
+    "path": "Root/Btn",
+    "enabled": true,
+    "tags": [
+     "interactable"
+    ],
+    "pos": [
+     0,
+     0,
+     0
+    ],
+    "scripts": [
+     {
+      "name": "pushButton",
+      "enabled": true,
+      "attrs": {
+       "hasPower": true,
+       "onPowerEvent": "pwr",
+       "onPushEvent": "pushed"
+      }
+     }
+    ]
+   },
+   {
+    "guid": "g1",
+    "name": "Gen",
+    "path": "Root/Gen",
+    "enabled": true,
+    "tags": [
+     "interactable"
+    ],
+    "pos": [
+     0,
+     0,
+     0
+    ],
+    "scripts": [
+     {
+      "name": "pushButton",
+      "enabled": true,
+      "attrs": {
+       "hasPower": false,
+       "onPushEvent": "pwr"
+      }
+     }
+    ]
+   },
+   {
+    "guid": "r1",
+    "name": "Rel",
+    "path": "Root/Rel",
+    "enabled": true,
+    "tags": [],
+    "pos": [
+     0,
+     0,
+     0
+    ],
+    "scripts": [
+     {
+      "name": "eventRelay",
+      "enabled": true,
+      "attrs": {
+       "triggerEvents": [
+        "pushed, other"
+       ],
+       "eventsToSend": [
+        {
+         "eventToSend": "q:1"
+        }
+       ]
+      }
+     }
+    ]
+   },
+   {
+    "guid": "s1",
+    "name": "Slide",
+    "path": "Root/Slide",
+    "enabled": true,
+    "tags": [
+     "interactable"
+    ],
+    "pos": [
+     0,
+     0,
+     0
+    ],
+    "scripts": [
+     {
+      "name": "slider",
+      "enabled": true,
+      "attrs": {
+       "controlEnabled": false,
+       "enabledEvent": "slide:on",
+       "movedEvent": "q:complete2"
+      }
+     }
+    ]
+   },
+   {
+    "guid": "m1",
+    "name": "Mixer",
+    "path": "Root/Mixer",
+    "enabled": true,
+    "tags": [],
+    "pos": [
+     0,
+     0,
+     0
+    ],
+    "scripts": [
+     {
+      "name": "checkMultipleFlags",
+      "enabled": true,
+      "attrs": {
+       "eventScope": "pre",
+       "checkOnEvent": "go",
+       "eventToFireOnCheckPassed": "ok",
+       "eventToFireOnCheckFailed": "no"
+      }
+     }
+    ]
+   },
+   {
+    "guid": "t1",
+    "name": "Tween",
+    "path": "Root/Tween",
+    "enabled": true,
+    "tags": [],
+    "pos": [
+     0,
+     0,
+     0
+    ],
+    "scripts": [
+     {
+      "name": "positionTween",
+      "enabled": true,
+      "attrs": {
+       "tweens": [
+        {
+         "startTweenEvent": "pushed",
+         "onCompleteEvent": "tw:done",
+         "eventScope": "entity"
+        }
+       ]
+      }
+     }
+    ]
+   },
+   {
+    "guid": "d1",
+    "name": "Dial",
+    "path": "Root/Dial",
+    "enabled": true,
+    "tags": [
+     "interactable",
+     "blocker"
+    ],
+    "pos": [
+     0,
+     0,
+     0
+    ],
+    "scripts": [
+     {
+      "name": "snappingDial",
+      "enabled": true,
+      "attrs": {
+       "snapAngles": [
+        {
+         "eventToFireAtAngle": "dial:90"
+        }
+       ]
+      }
+     }
+    ]
+   }
+  ],
+  "truncated": {}
+ },
+ "expected": {
+  "ok": true,
+  "hasQuestManager": true,
+  "scene": "extras",
+  "goalEvents": [
+   "quest:complete"
+  ],
+  "progressEvents": [
+   {
+    "event": "quest:progress",
+    "key": "quest:progress",
+    "progress": null
+   },
+   {
+    "event": "q:1",
+    "key": "q:1",
+    "progress": 1
+   }
+  ],
+  "rootKeys": [
+   "q:1"
+  ],
+  "eventOrder": [
+   "quest:complete",
+   "quest:progress",
+   "q:1",
+   "pwr",
+   "pushed",
+   "other",
+   "slide:on",
+   "q:complete2",
+   "pre:go",
+   "pre:ok",
+   "pre:no",
+   "pushed@t1",
+   "tw:done@t1",
+   "dial:90"
+  ],
+  "events": {
+   "quest:complete": {
+    "key": "quest:complete",
+    "name": "quest:complete",
+    "scope": "app",
+    "entity": null,
+    "guid": null,
+    "firedBy": [],
+    "listenedBy": [
+     [
+      "Quest Manager",
+      "discordQuestManager"
+     ]
+    ],
+    "isGoal": true,
+    "isProgress": false,
+    "progress": null,
+    "inGoalClosure": false,
+    "depth": null,
+    "count": 1,
+    "origin": "",
+    "args": []
+   },
+   "quest:progress": {
+    "key": "quest:progress",
+    "name": "quest:progress",
+    "scope": "app",
+    "entity": null,
+    "guid": null,
+    "firedBy": [],
+    "listenedBy": [
+     [
+      "Quest Manager",
+      "discordQuestManager"
+     ]
+    ],
+    "isGoal": false,
+    "isProgress": true,
+    "progress": null,
+    "inGoalClosure": false,
+    "depth": null,
+    "count": 1,
+    "origin": "",
+    "args": []
+   },
+   "q:1": {
+    "key": "q:1",
+    "name": "q:1",
+    "scope": "app",
+    "entity": null,
+    "guid": null,
+    "firedBy": [
+     [
+      "Rel",
+      "eventRelay",
+      "eventsToSend[0].eventToSend"
+     ]
+    ],
+    "listenedBy": [
+     [
+      "Quest Manager",
+      "discordQuestManager"
+     ]
+    ],
+    "isGoal": false,
+    "isProgress": true,
+    "progress": 1,
+    "inGoalClosure": true,
+    "depth": 0,
+    "count": 1,
+    "origin": "derived",
+    "args": []
+   },
+   "pwr": {
+    "key": "pwr",
+    "name": "pwr",
+    "scope": "app",
+    "entity": null,
+    "guid": null,
+    "firedBy": [
+     [
+      "Gen",
+      "pushButton",
+      "onPushEvent"
+     ]
+    ],
+    "listenedBy": [
+     [
+      "Btn",
+      "pushButton"
+     ]
+    ],
+    "isGoal": false,
+    "isProgress": false,
+    "progress": null,
+    "inGoalClosure": true,
+    "depth": 2,
+    "count": 1,
+    "origin": "interaction",
+    "args": []
+   },
+   "pushed": {
+    "key": "pushed",
+    "name": "pushed",
+    "scope": "app",
+    "entity": null,
+    "guid": null,
+    "firedBy": [
+     [
+      "Btn",
+      "pushButton",
+      "onPushEvent"
+     ]
+    ],
+    "listenedBy": [
+     [
+      "Rel",
+      "eventRelay"
+     ]
+    ],
+    "isGoal": false,
+    "isProgress": false,
+    "progress": null,
+    "inGoalClosure": true,
+    "depth": 1,
+    "count": 1,
+    "origin": "interaction",
+    "args": []
+   },
+   "other": {
+    "key": "other",
+    "name": "other",
+    "scope": "app",
+    "entity": null,
+    "guid": null,
+    "firedBy": [],
+    "listenedBy": [
+     [
+      "Rel",
+      "eventRelay"
+     ]
+    ],
+    "isGoal": false,
+    "isProgress": false,
+    "progress": null,
+    "inGoalClosure": true,
+    "depth": 1,
+    "count": 1,
+    "origin": "external",
+    "args": []
+   },
+   "slide:on": {
+    "key": "slide:on",
+    "name": "slide:on",
+    "scope": "app",
+    "entity": null,
+    "guid": null,
+    "firedBy": [],
+    "listenedBy": [
+     [
+      "Slide",
+      "slider"
+     ]
+    ],
+    "isGoal": false,
+    "isProgress": false,
+    "progress": null,
+    "inGoalClosure": false,
+    "depth": null,
+    "count": 1,
+    "origin": "",
+    "args": []
+   },
+   "q:complete2": {
+    "key": "q:complete2",
+    "name": "q:complete2",
+    "scope": "app",
+    "entity": null,
+    "guid": null,
+    "firedBy": [
+     [
+      "Slide",
+      "slider",
+      "movedEvent"
+     ]
+    ],
+    "listenedBy": [],
+    "isGoal": false,
+    "isProgress": false,
+    "progress": null,
+    "inGoalClosure": false,
+    "depth": null,
+    "count": 1,
+    "origin": "",
+    "args": []
+   },
+   "pre:go": {
+    "key": "pre:go",
+    "name": "pre:go",
+    "scope": "app",
+    "entity": null,
+    "guid": null,
+    "firedBy": [],
+    "listenedBy": [
+     [
+      "Mixer",
+      "checkMultipleFlags"
+     ]
+    ],
+    "isGoal": false,
+    "isProgress": false,
+    "progress": null,
+    "inGoalClosure": false,
+    "depth": null,
+    "count": 1,
+    "origin": "",
+    "args": []
+   },
+   "pre:ok": {
+    "key": "pre:ok",
+    "name": "pre:ok",
+    "scope": "app",
+    "entity": null,
+    "guid": null,
+    "firedBy": [
+     [
+      "Mixer",
+      "checkMultipleFlags",
+      "eventToFireOnCheckPassed"
+     ]
+    ],
+    "listenedBy": [],
+    "isGoal": false,
+    "isProgress": false,
+    "progress": null,
+    "inGoalClosure": false,
+    "depth": null,
+    "count": 1,
+    "origin": "",
+    "args": []
+   },
+   "pre:no": {
+    "key": "pre:no",
+    "name": "pre:no",
+    "scope": "app",
+    "entity": null,
+    "guid": null,
+    "firedBy": [
+     [
+      "Mixer",
+      "checkMultipleFlags",
+      "eventToFireOnCheckFailed"
+     ]
+    ],
+    "listenedBy": [],
+    "isGoal": false,
+    "isProgress": false,
+    "progress": null,
+    "inGoalClosure": false,
+    "depth": null,
+    "count": 1,
+    "origin": "",
+    "args": []
+   },
+   "pushed@t1": {
+    "key": "pushed@t1",
+    "name": "pushed",
+    "scope": "entity",
+    "entity": "Tween",
+    "guid": "t1",
+    "firedBy": [],
+    "listenedBy": [
+     [
+      "Tween",
+      "positionTween"
+     ]
+    ],
+    "isGoal": false,
+    "isProgress": false,
+    "progress": null,
+    "inGoalClosure": false,
+    "depth": null,
+    "count": 1,
+    "origin": "",
+    "args": []
+   },
+   "tw:done@t1": {
+    "key": "tw:done@t1",
+    "name": "tw:done",
+    "scope": "entity",
+    "entity": "Tween",
+    "guid": "t1",
+    "firedBy": [
+     [
+      "Tween",
+      "positionTween",
+      "tweens[0].onCompleteEvent"
+     ]
+    ],
+    "listenedBy": [],
+    "isGoal": false,
+    "isProgress": false,
+    "progress": null,
+    "inGoalClosure": false,
+    "depth": null,
+    "count": 1,
+    "origin": "",
+    "args": []
+   },
+   "dial:90": {
+    "key": "dial:90",
+    "name": "dial:90",
+    "scope": "app",
+    "entity": null,
+    "guid": null,
+    "firedBy": [
+     [
+      "Dial",
+      "snappingDial",
+      "snapAngles[0].eventToFireAtAngle"
+     ]
+    ],
+    "listenedBy": [],
+    "isGoal": false,
+    "isProgress": false,
+    "progress": null,
+    "inGoalClosure": false,
+    "depth": null,
+    "count": 1,
+    "origin": "",
+    "args": []
+   }
+  },
+  "edges": [
+   {
+    "entity": "Btn",
+    "guid": "b1",
+    "script": "pushButton",
+    "outKey": "pushed",
+    "outAttr": "onPushEvent",
+    "needs": [
+     {
+      "key": "pwr",
+      "attr": "onPowerEvent",
+      "count": 1,
+      "args": null
+     }
+    ]
+   },
+   {
+    "entity": "Gen",
+    "guid": "g1",
+    "script": "pushButton",
+    "outKey": "pwr",
+    "outAttr": "onPushEvent",
+    "needs": []
+   },
+   {
+    "entity": "Rel",
+    "guid": "r1",
+    "script": "eventRelay",
+    "outKey": "q:1",
+    "outAttr": "eventsToSend[0].eventToSend",
+    "needs": [
+     {
+      "key": "pushed",
+      "attr": "triggerEvents[0]",
+      "count": 1,
+      "args": null
+     },
+     {
+      "key": "other",
+      "attr": "triggerEvents[0]",
+      "count": 1,
+      "args": null
+     }
+    ]
+   },
+   {
+    "entity": "Slide",
+    "guid": "s1",
+    "script": "slider",
+    "outKey": "q:complete2",
+    "outAttr": "movedEvent",
+    "needs": [
+     {
+      "key": "slide:on",
+      "attr": "enabledEvent",
+      "count": 1,
+      "args": null
+     }
+    ]
+   },
+   {
+    "entity": "Mixer",
+    "guid": "m1",
+    "script": "checkMultipleFlags",
+    "outKey": "pre:ok",
+    "outAttr": "eventToFireOnCheckPassed",
+    "needs": [
+     {
+      "key": "pre:go",
+      "attr": "checkOnEvent",
+      "count": 1,
+      "args": null
+     }
+    ]
+   },
+   {
+    "entity": "Mixer",
+    "guid": "m1",
+    "script": "checkMultipleFlags",
+    "outKey": "pre:no",
+    "outAttr": "eventToFireOnCheckFailed",
+    "needs": [
+     {
+      "key": "pre:go",
+      "attr": "checkOnEvent",
+      "count": 1,
+      "args": null
+     }
+    ]
+   },
+   {
+    "entity": "Tween",
+    "guid": "t1",
+    "script": "positionTween",
+    "outKey": "tw:done@t1",
+    "outAttr": "tweens[0].onCompleteEvent",
+    "needs": [
+     {
+      "key": "pushed@t1",
+      "attr": "tweens[0].startTweenEvent",
+      "count": 1,
+      "args": null
+     }
+    ]
+   },
+   {
+    "entity": "Dial",
+    "guid": "d1",
+    "script": "snappingDial",
+    "outKey": "dial:90",
+    "outAttr": "snapAngles[0].eventToFireAtAngle",
+    "needs": []
+   }
+  ],
+  "interactables": [
+   {
+    "entity": "Btn",
+    "guid": "b1",
+    "tags": [
+     "interactable"
+    ],
+    "scripts": [
+     "pushButton"
+    ],
+    "fires": [
+     "pushed"
+    ],
+    "inClosure": true
+   },
+   {
+    "entity": "Gen",
+    "guid": "g1",
+    "tags": [
+     "interactable"
+    ],
+    "scripts": [
+     "pushButton"
+    ],
+    "fires": [
+     "pwr"
+    ],
+    "inClosure": true
+   },
+   {
+    "entity": "Slide",
+    "guid": "s1",
+    "tags": [
+     "interactable"
+    ],
+    "scripts": [
+     "slider"
+    ],
+    "fires": [
+     "q:complete2"
+    ],
+    "inClosure": false
+   },
+   {
+    "entity": "Dial",
+    "guid": "d1",
+    "tags": [
+     "interactable",
+     "blocker"
+    ],
+    "scripts": [
+     "snappingDial"
+    ],
+    "fires": [
+     "dial:90"
+    ],
+    "inClosure": false
+   }
+  ],
+  "closureKeys": [
+   "q:1",
+   "pwr",
+   "pushed",
+   "other"
+  ],
+  "closureOrder": [
+   "pwr",
+   "other",
+   "pushed",
+   "q:1"
+  ],
+  "objectiveNames": [
+   "Btn",
+   "Gen"
+  ],
+  "objectiveGuids": [
+   "b1",
+   "g1"
+  ],
+  "entityCount": 8
+ }
+}

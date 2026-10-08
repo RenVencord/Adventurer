@@ -1,0 +1,232 @@
+{
+ "name": "malformed_attrs",
+ "scan": {
+  "ok": true,
+  "entities": [
+   {
+    "guid": "x",
+    "name": "X",
+    "path": "Root/X",
+    "enabled": true,
+    "tags": [],
+    "pos": [
+     0,
+     0,
+     0
+    ],
+    "scripts": [
+     {
+      "name": "countEvents",
+      "enabled": true,
+      "attrs": {
+       "eventToCount": 5,
+       "counts": "no"
+      }
+     }
+    ]
+   },
+   {
+    "guid": "y",
+    "name": "Y",
+    "path": "Root/Y",
+    "enabled": true,
+    "tags": [],
+    "pos": [
+     0,
+     0,
+     0
+    ],
+    "scripts": [
+     {
+      "name": "countEvents",
+      "enabled": true,
+      "attrs": {
+       "eventToCount": "a:b",
+       "counts": [
+        null,
+        {
+         "targetCount": "3",
+         "eventToFireOnCountMet": 7
+        },
+        {
+         "targetCount": null,
+         "eventToFireOnCountMet": "c:d"
+        }
+       ]
+      }
+     }
+    ]
+   },
+   {
+    "guid": "z",
+    "name": "Z",
+    "path": "Root/Z",
+    "enabled": true,
+    "tags": [],
+    "pos": [
+     0,
+     0,
+     0
+    ],
+    "scripts": [
+     {
+      "name": "discordQuestManager",
+      "enabled": true,
+      "attrs": {
+       "progressEvents": [
+        null,
+        {
+         "event": "p:1",
+         "progress": "one"
+        },
+        {
+         "event": 4
+        }
+       ],
+       "questCompleteEvent": null
+      }
+     }
+    ]
+   }
+  ]
+ },
+ "expected": {
+  "ok": true,
+  "hasQuestManager": true,
+  "scene": "",
+  "goalEvents": [],
+  "progressEvents": [
+   {
+    "event": "quest:progress",
+    "key": "quest:progress",
+    "progress": null
+   },
+   {
+    "event": "p:1",
+    "key": "p:1",
+    "progress": null
+   }
+  ],
+  "rootKeys": [],
+  "eventOrder": [
+   "a:b",
+   "c:d",
+   "p:1",
+   "quest:progress"
+  ],
+  "events": {
+   "a:b": {
+    "key": "a:b",
+    "name": "a:b",
+    "scope": "app",
+    "entity": null,
+    "guid": null,
+    "firedBy": [],
+    "listenedBy": [
+     [
+      "Y",
+      "countEvents"
+     ]
+    ],
+    "isGoal": false,
+    "isProgress": false,
+    "progress": null,
+    "inGoalClosure": false,
+    "depth": null,
+    "count": 1,
+    "origin": "",
+    "args": []
+   },
+   "c:d": {
+    "key": "c:d",
+    "name": "c:d",
+    "scope": "app",
+    "entity": null,
+    "guid": null,
+    "firedBy": [
+     [
+      "Y",
+      "countEvents",
+      "counts[2].eventToFireOnCountMet"
+     ]
+    ],
+    "listenedBy": [],
+    "isGoal": false,
+    "isProgress": false,
+    "progress": null,
+    "inGoalClosure": false,
+    "depth": null,
+    "count": 1,
+    "origin": "",
+    "args": []
+   },
+   "p:1": {
+    "key": "p:1",
+    "name": "p:1",
+    "scope": "app",
+    "entity": null,
+    "guid": null,
+    "firedBy": [],
+    "listenedBy": [
+     [
+      "Z",
+      "discordQuestManager"
+     ]
+    ],
+    "isGoal": false,
+    "isProgress": true,
+    "progress": null,
+    "inGoalClosure": false,
+    "depth": null,
+    "count": 1,
+    "origin": "",
+    "args": []
+   },
+   "quest:progress": {
+    "key": "quest:progress",
+    "name": "quest:progress",
+    "scope": "app",
+    "entity": null,
+    "guid": null,
+    "firedBy": [],
+    "listenedBy": [
+     [
+      "Z",
+      "discordQuestManager"
+     ]
+    ],
+    "isGoal": false,
+    "isProgress": true,
+    "progress": null,
+    "inGoalClosure": false,
+    "depth": null,
+    "count": 1,
+    "origin": "",
+    "args": []
+   }
+  },
+  "edges": [
+   {
+    "entity": "Y",
+    "guid": "y",
+    "script": "countEvents",
+    "outKey": "c:d",
+    "outAttr": "counts[2].eventToFireOnCountMet",
+    "needs": [
+     {
+      "key": "a:b",
+      "attr": "eventToCount",
+      "count": 1,
+      "args": null
+     }
+    ]
+   }
+  ],
+  "interactables": [],
+  "closureKeys": [],
+  "closureOrder": [],
+  "objectiveNames": [],
+  "objectiveGuids": [],
+  "entityCount": 3
+ }
+}

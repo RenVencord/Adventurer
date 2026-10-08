@@ -1,0 +1,455 @@
+{
+ "name": "fake_game",
+ "spec": {
+  "scene": "Fake",
+  "scripts": {
+   "hist": {
+    "methods": {
+     "initialize": "function(){var t=this,e=this.app;e.on('a:lit',this._onComplete,this),this.app.on(this.completeEvent,this._onComplete,this),this.app.on('inline:event',function(){t._set('x')},t);this._wires=[['pair:event',this._onComplete],[this.completeEvent,this.record]];for(var i=0;i<this._wires.length;i++)this.app.on(this._wires[i][0],this._wires[i][1]);this._handler=function(n){t.app.fire('from:own',n)},this.app.on('own:event',this._handler);this.entity.fire('entity:fired');/* this.app.fire('in:comment') */ var s=\"this.app.fire('in:string')\",r=/[{}]/.test(s)}",
+     "_set": "function(t){this.screen=t,this.changeEvent&&this.app.fire(this.changeEvent,t,this._prev)}",
+     "_onComplete": "function(t){this.active&&t&&this.record(t)}",
+     "record": "function(t){var e=this._toRecord(t);if(!e)return null;return this._runs.push(e),this._remember(e.levelId,e.total,!0),this.app.fire('level:recorded',e.levelId),this.changeEvent&&this.app.fire(this.changeEvent,e),e}",
+     "_toRecord": "function(t){var e=Number(t.total);return isFinite(e)?{total:Math.round(e),ace:!!t.ace,name:String(t.name||''),acc:'number'==typeof t.acc?t.acc:-1,tags:t.tags||[]}:null}",
+     "_remember": "function(t,e,s){return this._levels[t]={played:!0,completed:!!s,best:e},!0}",
+     "_onRecord": "function(){if(canUseAccount(this))return s.apply(this,arguments)}",
+     "_onRun": "function(e){this.app.fire('quest:done',{levelId:e.levelId})}",
+     "update": "function(){return a.apply(this,arguments)}",
+     "partial": "function(){this.x=1;return h.call(this)}",
+     "unused": "function(){__called.push('unused')}"
+    }
+   },
+   "gate": {
+    "methods": {
+     "_hist": "function(){return this._rh=this.entity.script.hist,this._rh}",
+     "_check": "function(){var s=this._hist();return s&&s._levels&&!0===s._levels['x'].completed&&!this._done&&['a'].map(function(s){return s.trim()}).length&&s.count()}",
+     "_ping": "function(){this.entity.script.hist.record(1)}"
+    }
+   }
+  },
+  "entities": [
+   {
+    "name": "Director",
+    "guid": "g1",
+    "scripts": [
+     {
+      "name": "hist",
+      "attrs": {
+       "completeEvent": "run:complete",
+       "changeEvent": "run:recorded"
+      },
+      "own": {
+       "_onRecord": "_onRecord",
+       "_loose": "_onRun"
+      },
+      "ownFns": {
+       "_handler": "function(){}"
+      },
+      "ownArrays": {
+       "_wires": [
+        [
+         "pair:event",
+         "_onComplete"
+        ]
+       ]
+      }
+     },
+     {
+      "name": "gate",
+      "attrs": {}
+     }
+    ]
+   }
+  ],
+  "listeners": [
+   {
+    "event": "run:complete",
+    "scope": {
+     "entity": "Director",
+     "script": "hist"
+    },
+    "handler": {
+     "proto": "_onComplete"
+    }
+   },
+   {
+    "event": "run:recorded",
+    "scope": "app",
+    "holder": {
+     "entity": "Director",
+     "script": "hist"
+    },
+    "handler": {
+     "own": "_onRecord"
+    }
+   },
+   {
+    "event": "loose:event",
+    "scope": "app",
+    "holder": {
+     "entity": "Director",
+     "script": "hist"
+    },
+    "handler": {
+     "own": "_loose"
+    }
+   },
+   {
+    "event": "pair:event",
+    "scope": "app",
+    "holder": {
+     "entity": "Director",
+     "script": "hist"
+    },
+    "handler": {
+     "path": "_wires.0.1"
+    }
+   },
+   {
+    "event": "own:event",
+    "scope": "app",
+    "holder": {
+     "entity": "Director",
+     "script": "hist"
+    },
+    "handler": {
+     "own": "_handler"
+    }
+   },
+   {
+    "event": "engine:update",
+    "scope": "app",
+    "handler": {
+     "native": true
+    }
+   }
+  ]
+ },
+ "scan": {
+  "ok": true,
+  "scene": "Fake",
+  "applicationId": "123",
+  "title": "fake",
+  "engine": "test",
+  "entities": [
+   {
+    "guid": "g1",
+    "name": "Director",
+    "path": "Root/Director",
+    "enabled": true,
+    "tags": [],
+    "pos": [
+     0,
+     0,
+     0
+    ],
+    "scripts": [
+     {
+      "name": "hist",
+      "enabled": true,
+      "attrs": {
+       "completeEvent": "run:complete",
+       "changeEvent": "run:recorded"
+      }
+     },
+     {
+      "name": "gate",
+      "enabled": true,
+      "attrs": {}
+     }
+    ]
+   }
+  ],
+  "listeners": {
+   "run:complete": [
+    {
+     "guid": "g1",
+     "script": "hist",
+     "scopeKind": "entity",
+     "target": "app",
+     "targetGuid": null,
+     "method": "_onComplete",
+     "via": "proto"
+    }
+   ],
+   "run:recorded": [
+    {
+     "guid": "g1",
+     "script": "hist",
+     "scopeKind": "app",
+     "target": "app",
+     "targetGuid": null,
+     "method": "_onRecord",
+     "via": "own"
+    }
+   ],
+   "loose:event": [
+    {
+     "guid": "g1",
+     "script": "hist",
+     "scopeKind": "app",
+     "target": "app",
+     "targetGuid": null,
+     "paths": [
+      "_loose"
+     ]
+    }
+   ],
+   "pair:event": [
+    {
+     "guid": "g1",
+     "script": "hist",
+     "scopeKind": "app",
+     "target": "app",
+     "targetGuid": null,
+     "paths": [
+      "_wires[0][1]"
+     ]
+    }
+   ],
+   "own:event": [
+    {
+     "guid": "g1",
+     "script": "hist",
+     "scopeKind": "app",
+     "target": "app",
+     "targetGuid": null,
+     "method": "_handler",
+     "via": "own"
+    }
+   ],
+   "engine:update": [
+    {
+     "guid": null,
+     "script": null,
+     "scopeKind": "app",
+     "target": "app",
+     "targetGuid": null
+    }
+   ]
+  },
+  "scripts": {
+   "hist": {
+    "n": 1,
+    "names": [
+     "initialize",
+     "_set",
+     "_onComplete",
+     "record",
+     "_toRecord",
+     "_remember",
+     "_onRecord",
+     "_onRun",
+     "update",
+     "partial",
+     "unused",
+     "_handler"
+    ],
+    "m": {
+     "initialize": {
+      "o": [
+       [
+        "a:lit",
+        "_onComplete",
+        "a"
+       ],
+       [
+        "@completeEvent",
+        "_onComplete",
+        "a"
+       ],
+       [
+        "inline:event",
+        "initialize#1",
+        "a"
+       ],
+       [
+        "pair:event",
+        "_onComplete",
+        "a"
+       ],
+       [
+        "@completeEvent",
+        "record",
+        "a"
+       ],
+       [
+        "own:event",
+        "_handler",
+        "a"
+       ]
+      ],
+      "fe": [
+       "entity:fired"
+      ],
+      "r": [
+       "_onComplete",
+       "record",
+       "_handler"
+      ],
+      "st": [
+       "completeEvent",
+       "_wires"
+      ],
+      "sw": [
+       "_wires"
+      ],
+      "d": 1
+     },
+     "initialize#1": {
+      "c": [
+       "_set"
+      ]
+     },
+     "_handler": {
+      "f": [
+       "from:own"
+      ],
+      "pf": [
+       "from:own"
+      ]
+     },
+     "_set": {
+      "f": [
+       "@changeEvent"
+      ],
+      "pf": [
+       "@changeEvent"
+      ],
+      "st": [
+       "changeEvent",
+       "_prev"
+      ],
+      "sw": [
+       "screen"
+      ]
+     },
+     "_onComplete": {
+      "c": [
+       "record"
+      ],
+      "st": [
+       "active"
+      ],
+      "pp": [
+       "record"
+      ]
+     },
+     "record": {
+      "f": [
+       "level:recorded",
+       "@changeEvent"
+      ],
+      "c": [
+       "_toRecord",
+       "_remember"
+      ],
+      "st": [
+       "_runs",
+       "changeEvent"
+      ],
+      "sw": [
+       "_runs"
+      ],
+      "pp": [
+       "_toRecord"
+      ]
+     },
+     "_toRecord": {
+      "pr": {
+       "total": "n",
+       "ace": "b",
+       "name": "s",
+       "acc": "n",
+       "tags": "a"
+      }
+     },
+     "_remember": {
+      "st": [
+       "_levels"
+      ],
+      "sw": [
+       "_levels[]",
+       "_levels[].played",
+       "_levels[].completed",
+       "_levels[].best"
+      ]
+     },
+     "_onRecord": {
+      "w": 1
+     },
+     "_onRun": {
+      "f": [
+       "quest:done"
+      ],
+      "pr": {
+       "levelId": "?"
+      }
+     },
+     "update": {
+      "w": 1
+     },
+     "partial": {
+      "sw": [
+       "x"
+      ],
+      "h": 1
+     }
+    },
+    "qw": 1
+   },
+   "gate": {
+    "n": 1,
+    "names": [
+     "_hist",
+     "_check",
+     "_ping"
+    ],
+    "m": {
+     "_hist": {
+      "st": [
+       "_rh"
+      ],
+      "sw": [
+       "_rh"
+      ]
+     },
+     "_check": {
+      "c": [
+       "_hist"
+      ],
+      "st": [
+       "_done"
+      ],
+      "xr": [
+       "hist:_levels",
+       "hist:_levels[].completed"
+      ],
+      "xc": [
+       "hist:count"
+      ]
+     },
+     "_ping": {
+      "xc": [
+       "hist:record"
+      ]
+     }
+    }
+   }
+  },
+  "truncated": {
+   "entities": false,
+   "attrs": false,
+   "events": false,
+   "listeners": false,
+   "bytes": false,
+   "scripts": false,
+   "sources": false
+  },
+  "counts": {
+   "entities": 1,
+   "events": 6,
+   "listeners": 6
+  },
+  "ms": 12
+ }
+}

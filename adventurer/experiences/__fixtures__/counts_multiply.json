@@ -1,0 +1,258 @@
+{
+ "name": "counts_multiply",
+ "scan": {
+  "ok": true,
+  "entities": [
+   {
+    "guid": "q",
+    "name": "Quest Manager",
+    "path": "Root/Quest Manager",
+    "enabled": true,
+    "tags": [],
+    "pos": [
+     0,
+     0,
+     0
+    ],
+    "scripts": [
+     {
+      "name": "discordQuestManager",
+      "enabled": true,
+      "attrs": {
+       "questCompleteEvent": "quest:complete",
+       "questProgressEvent": "quest:progress",
+       "enableDebugLogs": false,
+       "progressEvents": []
+      }
+     }
+    ]
+   },
+   {
+    "guid": "c",
+    "name": "C",
+    "path": "Root/C",
+    "enabled": true,
+    "tags": [],
+    "pos": [
+     0,
+     0,
+     0
+    ],
+    "scripts": [
+     {
+      "name": "countEvents",
+      "enabled": true,
+      "attrs": {
+       "eventToCount": "ping",
+       "counts": [
+        {
+         "targetCount": 3,
+         "eventToFireOnCountMet": "mid"
+        }
+       ]
+      }
+     }
+    ]
+   },
+   {
+    "guid": "d",
+    "name": "D",
+    "path": "Root/D",
+    "enabled": true,
+    "tags": [],
+    "pos": [
+     0,
+     0,
+     0
+    ],
+    "scripts": [
+     {
+      "name": "countEvents",
+      "enabled": true,
+      "attrs": {
+       "eventToCount": "mid",
+       "counts": [
+        {
+         "targetCount": 2,
+         "eventToFireOnCountMet": "quest:complete"
+        }
+       ]
+      }
+     }
+    ]
+   }
+  ]
+ },
+ "expected": {
+  "ok": true,
+  "hasQuestManager": true,
+  "scene": "",
+  "goalEvents": [
+   "quest:complete"
+  ],
+  "progressEvents": [
+   {
+    "event": "quest:progress",
+    "key": "quest:progress",
+    "progress": null
+   }
+  ],
+  "rootKeys": [
+   "quest:complete"
+  ],
+  "eventOrder": [
+   "quest:complete",
+   "quest:progress",
+   "ping",
+   "mid"
+  ],
+  "events": {
+   "quest:complete": {
+    "key": "quest:complete",
+    "name": "quest:complete",
+    "scope": "app",
+    "entity": null,
+    "guid": null,
+    "firedBy": [
+     [
+      "D",
+      "countEvents",
+      "counts[0].eventToFireOnCountMet"
+     ]
+    ],
+    "listenedBy": [
+     [
+      "Quest Manager",
+      "discordQuestManager"
+     ]
+    ],
+    "isGoal": true,
+    "isProgress": false,
+    "progress": null,
+    "inGoalClosure": true,
+    "depth": 0,
+    "count": 1,
+    "origin": "derived",
+    "args": []
+   },
+   "quest:progress": {
+    "key": "quest:progress",
+    "name": "quest:progress",
+    "scope": "app",
+    "entity": null,
+    "guid": null,
+    "firedBy": [],
+    "listenedBy": [
+     [
+      "Quest Manager",
+      "discordQuestManager"
+     ]
+    ],
+    "isGoal": false,
+    "isProgress": true,
+    "progress": null,
+    "inGoalClosure": false,
+    "depth": null,
+    "count": 1,
+    "origin": "",
+    "args": []
+   },
+   "ping": {
+    "key": "ping",
+    "name": "ping",
+    "scope": "app",
+    "entity": null,
+    "guid": null,
+    "firedBy": [],
+    "listenedBy": [
+     [
+      "C",
+      "countEvents"
+     ]
+    ],
+    "isGoal": false,
+    "isProgress": false,
+    "progress": null,
+    "inGoalClosure": true,
+    "depth": 2,
+    "count": 6,
+    "origin": "external",
+    "args": []
+   },
+   "mid": {
+    "key": "mid",
+    "name": "mid",
+    "scope": "app",
+    "entity": null,
+    "guid": null,
+    "firedBy": [
+     [
+      "C",
+      "countEvents",
+      "counts[0].eventToFireOnCountMet"
+     ]
+    ],
+    "listenedBy": [
+     [
+      "D",
+      "countEvents"
+     ]
+    ],
+    "isGoal": false,
+    "isProgress": false,
+    "progress": null,
+    "inGoalClosure": true,
+    "depth": 1,
+    "count": 2,
+    "origin": "derived",
+    "args": []
+   }
+  },
+  "edges": [
+   {
+    "entity": "C",
+    "guid": "c",
+    "script": "countEvents",
+    "outKey": "mid",
+    "outAttr": "counts[0].eventToFireOnCountMet",
+    "needs": [
+     {
+      "key": "ping",
+      "attr": "eventToCount",
+      "count": 3,
+      "args": null
+     }
+    ]
+   },
+   {
+    "entity": "D",
+    "guid": "d",
+    "script": "countEvents",
+    "outKey": "quest:complete",
+    "outAttr": "counts[0].eventToFireOnCountMet",
+    "needs": [
+     {
+      "key": "mid",
+      "attr": "eventToCount",
+      "count": 2,
+      "args": null
+     }
+    ]
+   }
+  ],
+  "interactables": [],
+  "closureKeys": [
+   "quest:complete",
+   "ping",
+   "mid"
+  ],
+  "closureOrder": [
+   "ping",
+   "mid",
+   "quest:complete"
+  ],
+  "objectiveNames": [],
+  "objectiveGuids": [],
+  "entityCount": 3
+ }
+}

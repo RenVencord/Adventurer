@@ -1,0 +1,189 @@
+{
+ "name": "entity_scoped",
+ "scan": {
+  "ok": true,
+  "scene": "Game",
+  "applicationId": "42",
+  "entities": [
+   {
+    "guid": "p",
+    "name": "Pad",
+    "path": "Root/Pad",
+    "enabled": true,
+    "tags": [],
+    "pos": [
+     0,
+     0,
+     0
+    ],
+    "scripts": [
+     {
+      "name": "pad",
+      "enabled": true,
+      "attrs": {}
+     },
+     {
+      "name": "door",
+      "enabled": true,
+      "attrs": {}
+     }
+    ]
+   }
+  ],
+  "scripts": {
+   "pad": {
+    "n": 1,
+    "names": [
+     "_press",
+     "initialize"
+    ],
+    "m": {
+     "_press": {
+      "fe": [
+       "pad:pressed"
+      ]
+     },
+     "initialize": {
+      "o": [
+       [
+        "pad:go",
+        "_press",
+        "a"
+       ]
+      ]
+     }
+    }
+   },
+   "door": {
+    "n": 1,
+    "names": [
+     "_open",
+     "initialize"
+    ],
+    "m": {
+     "initialize": {
+      "o": [
+       [
+        "pad:pressed",
+        "_open",
+        "e"
+       ]
+      ]
+     },
+     "_open": {
+      "f": [
+       "arise:questComplete"
+      ]
+     }
+    }
+   }
+  },
+  "listeners": {},
+  "truncated": {}
+ },
+ "knowledge": null,
+ "expected": {
+  "source": {
+   "available": true,
+   "found": true,
+   "scriptTypes": 2,
+   "listeners": 0,
+   "unattributed": 0,
+   "goal": "arise:questComplete",
+   "goals": [
+    {
+     "key": "arise:questComplete",
+     "strength": 3,
+     "learned": false
+    }
+   ],
+   "unreachedGoals": [],
+   "events": [
+    {
+     "key": "arise:questComplete",
+     "name": "arise:questComplete",
+     "scope": "app",
+     "entity": null,
+     "depth": 0,
+     "root": false
+    },
+    {
+     "key": "pad:pressed@p",
+     "name": "pad:pressed",
+     "scope": "entity",
+     "entity": "Pad",
+     "depth": 1,
+     "root": false
+    },
+    {
+     "key": "pad:go",
+     "name": "pad:go",
+     "scope": "app",
+     "entity": null,
+     "depth": 2,
+     "root": true
+    }
+   ],
+   "hops": [
+    {
+     "src": "pad:pressed@p",
+     "dst": "arise:questComplete",
+     "how": "static",
+     "ambiguous": false,
+     "approximate": false,
+     "path": "door._open",
+     "steps": [
+      {
+       "script": "door",
+       "entity": "Pad",
+       "method": "_open",
+       "inst": 1,
+       "how": "handler",
+       "approximate": false
+      }
+     ]
+    },
+    {
+     "src": "pad:go",
+     "dst": "pad:pressed@p",
+     "how": "static",
+     "ambiguous": false,
+     "approximate": false,
+     "path": "pad._press",
+     "steps": [
+      {
+       "script": "pad",
+       "entity": "Pad",
+       "method": "_press",
+       "inst": 0,
+       "how": "handler",
+       "approximate": false
+      }
+     ]
+    }
+   ],
+   "owners": [],
+   "guards": [],
+   "entries": [],
+   "preferred": "",
+   "triggerNotes": [
+    "trigger pad:go (start/play/select style, score 3)"
+   ],
+   "notes": []
+  },
+  "recipe": {
+   "version": 1,
+   "goal": "arise:questComplete",
+   "triggers": [
+    "pad:go"
+   ],
+   "entries": [],
+   "suppress": [
+    "leaderboard"
+   ],
+   "delay_ms": 0,
+   "notes": "arise:questComplete is fired by door._open, reached from pad:pressed via door._open. Entries are in goal-upward order (closest to the goal first); no guard with a known writer was found, so no entry is preferred. 1 entity-scoped event(s) on the chain are not offered (the recipe cannot name an entity).",
+   "source": "guessed"
+  }
+ }
+}

@@ -1,0 +1,83 @@
+{
+ "name": "generic_no_registry",
+ "scan": {
+  "ok": true,
+  "entities": [
+   {
+    "guid": "g",
+    "name": "Gate",
+    "path": "Root/Gate",
+    "enabled": true,
+    "tags": [],
+    "pos": [
+     0,
+     0,
+     0
+    ],
+    "scripts": [
+     {
+      "name": "mysteryGate",
+      "enabled": true,
+      "attrs": {
+       "onOpen": "gate:open",
+       "url": "https://x.example/a",
+       "plain": "hello"
+      }
+     }
+    ]
+   }
+  ]
+ },
+ "expected": {
+  "ok": true,
+  "hasQuestManager": false,
+  "scene": "",
+  "goalEvents": [],
+  "progressEvents": [],
+  "rootKeys": [],
+  "eventOrder": [
+   "gate:open"
+  ],
+  "events": {
+   "gate:open": {
+    "key": "gate:open",
+    "name": "gate:open",
+    "scope": "app",
+    "entity": null,
+    "guid": null,
+    "firedBy": [
+     [
+      "Gate",
+      "mysteryGate",
+      "onOpen"
+     ]
+    ],
+    "listenedBy": [],
+    "isGoal": false,
+    "isProgress": false,
+    "progress": null,
+    "inGoalClosure": false,
+    "depth": null,
+    "count": 1,
+    "origin": "",
+    "args": []
+   }
+  },
+  "edges": [
+   {
+    "entity": "Gate",
+    "guid": "g",
+    "script": "mysteryGate",
+    "outKey": "gate:open",
+    "outAttr": "onOpen",
+    "needs": []
+   }
+  ],
+  "interactables": [],
+  "closureKeys": [],
+  "closureOrder": [],
+  "objectiveNames": [],
+  "objectiveGuids": [],
+  "entityCount": 1
+ }
+}

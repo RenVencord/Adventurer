@@ -1,0 +1,214 @@
+{
+ "name": "strongest_goal",
+ "scan": {
+  "ok": true,
+  "scene": "Game",
+  "applicationId": "42",
+  "entities": [
+   {
+    "guid": "q",
+    "name": "Q",
+    "path": "Root/Q",
+    "enabled": true,
+    "tags": [],
+    "pos": [
+     0,
+     0,
+     0
+    ],
+    "scripts": [
+     {
+      "name": "quest",
+      "enabled": true,
+      "attrs": {}
+     }
+    ]
+   }
+  ],
+  "scripts": {
+   "quest": {
+    "n": 1,
+    "names": [
+     "_one",
+     "_three",
+     "_two",
+     "initialize"
+    ],
+    "m": {
+     "initialize": {
+      "o": [
+       [
+        "a:one",
+        "_one",
+        "a"
+       ],
+       [
+        "a:two",
+        "_two",
+        "a"
+       ],
+       [
+        "a:three",
+        "_three",
+        "a"
+       ]
+      ]
+     },
+     "_one": {
+      "f": [
+       "quest:complete"
+      ]
+     },
+     "_two": {
+      "f": [
+       "a:one"
+      ]
+     },
+     "_three": {
+      "f": [
+       "arise:questComplete"
+      ]
+     }
+    }
+   }
+  },
+  "listeners": {},
+  "truncated": {}
+ },
+ "knowledge": null,
+ "expected": {
+  "source": {
+   "available": true,
+   "found": true,
+   "scriptTypes": 1,
+   "listeners": 0,
+   "unattributed": 0,
+   "goal": "quest:complete",
+   "goals": [
+    {
+     "key": "arise:questComplete",
+     "strength": 3,
+     "learned": false
+    },
+    {
+     "key": "quest:complete",
+     "strength": 3,
+     "learned": false
+    }
+   ],
+   "unreachedGoals": [],
+   "events": [
+    {
+     "key": "quest:complete",
+     "name": "quest:complete",
+     "scope": "app",
+     "entity": null,
+     "depth": 0,
+     "root": false
+    },
+    {
+     "key": "a:one",
+     "name": "a:one",
+     "scope": "app",
+     "entity": null,
+     "depth": 1,
+     "root": false
+    },
+    {
+     "key": "a:two",
+     "name": "a:two",
+     "scope": "app",
+     "entity": null,
+     "depth": 2,
+     "root": true
+    }
+   ],
+   "hops": [
+    {
+     "src": "a:one",
+     "dst": "quest:complete",
+     "how": "static",
+     "ambiguous": false,
+     "approximate": false,
+     "path": "quest._one",
+     "steps": [
+      {
+       "script": "quest",
+       "entity": "Q",
+       "method": "_one",
+       "inst": 0,
+       "how": "handler",
+       "approximate": false
+      }
+     ]
+    },
+    {
+     "src": "a:two",
+     "dst": "a:one",
+     "how": "static",
+     "ambiguous": false,
+     "approximate": false,
+     "path": "quest._two",
+     "steps": [
+      {
+       "script": "quest",
+       "entity": "Q",
+       "method": "_two",
+       "inst": 0,
+       "how": "handler",
+       "approximate": false
+      }
+     ]
+    }
+   ],
+   "owners": [],
+   "guards": [],
+   "entries": [
+    {
+     "name": "a:one",
+     "depth": 1,
+     "approximate": false,
+     "guardOk": null,
+     "fields": {},
+     "note": ""
+    },
+    {
+     "name": "a:two",
+     "depth": 2,
+     "approximate": false,
+     "guardOk": null,
+     "fields": {},
+     "note": ""
+    }
+   ],
+   "preferred": "",
+   "triggerNotes": [],
+   "notes": []
+  },
+  "recipe": {
+   "version": 1,
+   "goal": "quest:complete",
+   "triggers": [],
+   "entries": [
+    {
+     "name": "a:one",
+     "scope": "app",
+     "args": [],
+     "source": "inferred"
+    },
+    {
+     "name": "a:two",
+     "scope": "app",
+     "args": [],
+     "source": "inferred"
+    }
+   ],
+   "suppress": [
+    "leaderboard"
+   ],
+   "delay_ms": 0,
+   "notes": "quest:complete is fired by quest._one, reached from a:one via quest._one. Entries are in goal-upward order (closest to the goal first); no guard with a known writer was found, so no entry is preferred.",
+   "source": "guessed"
+  }
+ }
+}

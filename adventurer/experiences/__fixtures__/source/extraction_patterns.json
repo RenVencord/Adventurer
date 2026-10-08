@@ -1,0 +1,580 @@
+{
+ "name": "patterns",
+ "spec": {
+  "scene": "Patterns",
+  "scripts": {
+   "gizmo": {
+    "methods": {
+     "initialize": "function(){var self=this,a=self.app;a.on('g:one',self._a,self);self.app.once('g:two',function(e){self._b(e.id)},self);this.entity.on('g:ent',this._c,this);this._pairs=[['g:pair',this._d],['g:pair2',function(x){self._e(x)}]];this.app.fire('g:boot');var tpl=`${1} this.app.fire('in:tpl') ${self.x}`,rx=/\\/\\*|[\\]]\\/fire/;this.app.on(this.dynamicEvent,this._a);this.app.on(someName,this._b);this._ownFn=function(q){self.app.fire('own:fired',q)};this.app.on('own:ev',this._ownFn)}",
+     "_a": "function(p){if(!this.ready)return;this._b(p);this._d.call(this,p)}",
+     "_b": "function(e){this.count=(this.count||0)+1;this.log.push(e.id);this.app.fire(this.doneEvent,e.id,e);this.entity.fire('g:local',e)}",
+     "_c": "function(){return this._b.apply(this,arguments)}",
+     "_d": "function(m){var n=Number(m.score),s=String(m.name||''),k='number'==typeof m.rank?m.rank:0;return !!m.flag&&m.list.length>0&&m.bag||{}}",
+     "_e": "function(x){this.state.deep.x=3;this.map.set('k',1);this.flags={a:1,b:2,'c-d':3};this.items.splice(0,1);this.n++;this._h(x)}",
+     "_f": "function(){var t=this._other();return t&&t.count>0&&t.data.list[0].x&&t.go(1)}",
+     "_other": "function(){return this.entity.script.other}",
+     "_g": "function(){this.entity.script.other.go();return this.entity.script.other.data.rows[2].v}",
+     "_h": "function(t){return [1].map(function(t){return t.x}).length+t.y}",
+     "_w": "function(){return n.apply(this,arguments)}",
+     "_mix": "function(){this.k=1;return n.call(this)}",
+     "_bind": "function(){this._bound={ev:this._a.bind(this)};this._alias=this._b.bind(this);this._deep=[this._a.bind(this)]}",
+     "update": "function(dt){this.t+=dt;this._tick()}",
+     "_tick": "function(){this.app.fire('g:tick')}",
+     "_comments": "function(){/* this.app.fire('c:block') */ // this.app.fire('c:line')\n return this.a/2+this.b/3}",
+     "_arrow": "function(){var u=this.app;u.on('arrow:ev',(z)=>{this._b(z)});this.items.forEach(i=>this._h(i))}",
+     "_big": "function(){this.queue.unshift(1);this.cache.delete('x');this.total+=2;this.n--;this.o.p.q=1;this.w['k'].v=2}"
+    }
+   },
+   "other": {
+    "methods": {
+     "go": "function(n){this.last=n;this.app.fire('o:go',n)}",
+     "ping": "function(){this.entity.script.gizmo._b(1);this.entity.script.gizmo.count}"
+    }
+   }
+  },
+  "entities": [
+   {
+    "name": "G",
+    "guid": "g1",
+    "scripts": [
+     {
+      "name": "gizmo",
+      "attrs": {
+       "doneEvent": "g:done",
+       "dynamicEvent": "dyn"
+      },
+      "own": {
+       "_boundA": "_a",
+       "stray": "_h"
+      },
+      "ownFns": {
+       "_ownFn": "function(){}"
+      },
+      "ownArrays": {
+       "_pairs": [
+        [
+         "g:pair",
+         "_d"
+        ]
+       ]
+      }
+     },
+     {
+      "name": "other",
+      "attrs": {}
+     }
+    ]
+   }
+  ],
+  "listeners": [
+   {
+    "event": "g:one",
+    "scope": {
+     "entity": "G",
+     "script": "gizmo"
+    },
+    "handler": {
+     "proto": "_a"
+    }
+   },
+   {
+    "event": "g:pair",
+    "scope": "app",
+    "holder": {
+     "entity": "G",
+     "script": "gizmo"
+    },
+    "handler": {
+     "path": "_pairs.0.1"
+    }
+   },
+   {
+    "event": "g:bound",
+    "scope": "app",
+    "holder": {
+     "entity": "G",
+     "script": "gizmo"
+    },
+    "handler": {
+     "own": "_boundA"
+    }
+   },
+   {
+    "event": "g:stray",
+    "scope": "app",
+    "holder": {
+     "entity": "G",
+     "script": "gizmo"
+    },
+    "handler": {
+     "own": "stray"
+    }
+   },
+   {
+    "event": "own:ev",
+    "scope": "app",
+    "holder": {
+     "entity": "G",
+     "script": "gizmo"
+    },
+    "handler": {
+     "own": "_ownFn"
+    }
+   },
+   {
+    "event": "engine:tick",
+    "scope": "app",
+    "handler": {
+     "native": true
+    }
+   }
+  ]
+ },
+ "scan": {
+  "ok": true,
+  "scene": "Patterns",
+  "applicationId": "123",
+  "title": "fake",
+  "engine": "test",
+  "entities": [
+   {
+    "guid": "g1",
+    "name": "G",
+    "path": "Root/G",
+    "enabled": true,
+    "tags": [],
+    "pos": [
+     0,
+     0,
+     0
+    ],
+    "scripts": [
+     {
+      "name": "gizmo",
+      "enabled": true,
+      "attrs": {
+       "doneEvent": "g:done",
+       "dynamicEvent": "dyn"
+      }
+     },
+     {
+      "name": "other",
+      "enabled": true,
+      "attrs": {}
+     }
+    ]
+   }
+  ],
+  "listeners": {
+   "g:one": [
+    {
+     "guid": "g1",
+     "script": "gizmo",
+     "scopeKind": "entity",
+     "target": "app",
+     "targetGuid": null,
+     "method": "_a",
+     "via": "proto"
+    }
+   ],
+   "g:pair": [
+    {
+     "guid": "g1",
+     "script": "gizmo",
+     "scopeKind": "app",
+     "target": "app",
+     "targetGuid": null,
+     "paths": [
+      "_pairs[0][1]"
+     ]
+    }
+   ],
+   "g:bound": [
+    {
+     "guid": "g1",
+     "script": "gizmo",
+     "scopeKind": "app",
+     "target": "app",
+     "targetGuid": null,
+     "paths": [
+      "_boundA"
+     ]
+    }
+   ],
+   "g:stray": [
+    {
+     "guid": "g1",
+     "script": "gizmo",
+     "scopeKind": "app",
+     "target": "app",
+     "targetGuid": null,
+     "paths": [
+      "stray"
+     ]
+    }
+   ],
+   "own:ev": [
+    {
+     "guid": "g1",
+     "script": "gizmo",
+     "scopeKind": "app",
+     "target": "app",
+     "targetGuid": null,
+     "method": "_ownFn",
+     "via": "own"
+    }
+   ],
+   "engine:tick": [
+    {
+     "guid": null,
+     "script": null,
+     "scopeKind": "app",
+     "target": "app",
+     "targetGuid": null
+    }
+   ]
+  },
+  "scripts": {
+   "gizmo": {
+    "n": 1,
+    "names": [
+     "initialize",
+     "_a",
+     "_b",
+     "_c",
+     "_d",
+     "_e",
+     "_f",
+     "_other",
+     "_g",
+     "_h",
+     "_w",
+     "_mix",
+     "_bind",
+     "update",
+     "_tick",
+     "_comments",
+     "_arrow",
+     "_big",
+     "_ownFn"
+    ],
+    "m": {
+     "initialize": {
+      "o": [
+       [
+        "g:one",
+        "_a",
+        "a"
+       ],
+       [
+        "g:two",
+        "initialize#1",
+        "a"
+       ],
+       [
+        "g:ent",
+        "_c",
+        "e"
+       ],
+       [
+        "g:pair",
+        "_d",
+        "a"
+       ],
+       [
+        "g:pair2",
+        "initialize#2",
+        "a"
+       ],
+       [
+        "@dynamicEvent",
+        "_a",
+        "a"
+       ],
+       [
+        "own:ev",
+        "_ownFn",
+        "a"
+       ]
+      ],
+      "f": [
+       "g:boot"
+      ],
+      "r": [
+       "_a",
+       "_c",
+       "_d",
+       "_b",
+       "_ownFn"
+      ],
+      "st": [
+       "dynamicEvent"
+      ],
+      "sw": [
+       "_pairs"
+      ],
+      "d": 1
+     },
+     "initialize#1": {
+      "c": [
+       "_b"
+      ],
+      "pr": {
+       "id": "?"
+      }
+     },
+     "initialize#2": {
+      "c": [
+       "_e"
+      ],
+      "pp": [
+       "_e"
+      ]
+     },
+     "_ownFn": {
+      "f": [
+       "own:fired"
+      ],
+      "pf": [
+       "own:fired"
+      ]
+     },
+     "_a": {
+      "c": [
+       "_b",
+       "_d"
+      ],
+      "st": [
+       "ready"
+      ],
+      "pp": [
+       "_b",
+       "_d"
+      ]
+     },
+     "_b": {
+      "f": [
+       "@doneEvent"
+      ],
+      "fe": [
+       "g:local"
+      ],
+      "pf": [
+       "g:local"
+      ],
+      "st": [
+       "count",
+       "log",
+       "doneEvent"
+      ],
+      "sw": [
+       "count",
+       "log"
+      ],
+      "pr": {
+       "id": "?"
+      }
+     },
+     "_c": {
+      "c": [
+       "_b"
+      ],
+      "pp": [
+       "_b"
+      ]
+     },
+     "_d": {
+      "pr": {
+       "score": "n",
+       "name": "s",
+       "rank": "n",
+       "flag": "b",
+       "list": "a",
+       "bag": "o"
+      }
+     },
+     "_e": {
+      "c": [
+       "_h"
+      ],
+      "st": [
+       "state",
+       "map",
+       "items",
+       "n"
+      ],
+      "sw": [
+       "state.deep.x",
+       "flags",
+       "flags.a",
+       "flags.b",
+       "flags.c-d",
+       "n",
+       "map",
+       "items"
+      ],
+      "pp": [
+       "_h"
+      ]
+     },
+     "_f": {
+      "c": [
+       "_other"
+      ],
+      "xr": [
+       "other:count",
+       "other:data.list[].x"
+      ],
+      "xc": [
+       "other:go"
+      ]
+     },
+     "_g": {
+      "xc": [
+       "other:go"
+      ],
+      "xr": [
+       "other:data.rows[].v"
+      ]
+     },
+     "_h": {
+      "pr": {
+       "y": "?"
+      }
+     },
+     "_w": {
+      "w": 1
+     },
+     "_mix": {
+      "sw": [
+       "k"
+      ],
+      "h": 1
+     },
+     "_bind": {
+      "r": [
+       "_a",
+       "_b"
+      ],
+      "sw": [
+       "_bound",
+       "_bound.ev",
+       "_alias",
+       "_deep"
+      ]
+     },
+     "update": {
+      "c": [
+       "_tick"
+      ],
+      "st": [
+       "t"
+      ],
+      "sw": [
+       "t"
+      ]
+     },
+     "_tick": {
+      "f": [
+       "g:tick"
+      ]
+     },
+     "_comments": {
+      "st": [
+       "a",
+       "b"
+      ]
+     },
+     "_arrow": {
+      "o": [
+       [
+        "arrow:ev",
+        "_arrow#1",
+        "a"
+       ]
+      ],
+      "c": [
+       "_h"
+      ],
+      "st": [
+       "items"
+      ]
+     },
+     "_arrow#1": {
+      "c": [
+       "_b"
+      ],
+      "pp": [
+       "_b"
+      ]
+     },
+     "_big": {
+      "st": [
+       "queue",
+       "cache",
+       "total",
+       "n",
+       "o",
+       "w"
+      ],
+      "sw": [
+       "total",
+       "n",
+       "o.p.q",
+       "w[].v",
+       "queue",
+       "cache"
+      ]
+     }
+    },
+    "binds": {
+     "ev": "_a",
+     "_alias": "_b"
+    }
+   },
+   "other": {
+    "n": 1,
+    "names": [
+     "go",
+     "ping"
+    ],
+    "m": {
+     "go": {
+      "f": [
+       "o:go"
+      ],
+      "pf": [
+       "o:go"
+      ],
+      "sw": [
+       "last"
+      ]
+     },
+     "ping": {
+      "xc": [
+       "gizmo:_b"
+      ],
+      "xr": [
+       "gizmo:count"
+      ]
+     }
+    }
+   }
+  },
+  "truncated": {
+   "entities": false,
+   "attrs": false,
+   "events": false,
+   "listeners": false,
+   "bytes": false,
+   "scripts": false,
+   "sources": false
+  },
+  "counts": {
+   "entities": 1,
+   "events": 6,
+   "listeners": 6
+  },
+  "ms": 17
+ }
+}

@@ -1,0 +1,78 @@
+{
+ "name": "unlearned_goal",
+ "scan": {
+  "ok": true,
+  "scene": "Game",
+  "applicationId": "42",
+  "entities": [
+   {
+    "guid": "q",
+    "name": "Q",
+    "path": "Root/Q",
+    "enabled": true,
+    "tags": [],
+    "pos": [
+     0,
+     0,
+     0
+    ],
+    "scripts": [
+     {
+      "name": "quest",
+      "enabled": true,
+      "attrs": {}
+     }
+    ]
+   }
+  ],
+  "scripts": {
+   "quest": {
+    "n": 1,
+    "names": [
+     "_onWin",
+     "initialize"
+    ],
+    "m": {
+     "initialize": {
+      "o": [
+       [
+        "round:win",
+        "_onWin",
+        "a"
+       ]
+      ]
+     },
+     "_onWin": {
+      "f": [
+       "bonus:unlocked"
+      ]
+     }
+    }
+   }
+  },
+  "listeners": {},
+  "truncated": {}
+ },
+ "knowledge": null,
+ "expected": {
+  "source": {
+   "available": true,
+   "found": false,
+   "scriptTypes": 1,
+   "listeners": 0,
+   "unattributed": 0,
+   "goal": "",
+   "goals": [],
+   "unreachedGoals": [],
+   "events": [],
+   "hops": [],
+   "owners": [],
+   "guards": [],
+   "entries": [],
+   "preferred": "",
+   "triggerNotes": [],
+   "notes": []
+  },
+  "recipe": null
+ }
+}

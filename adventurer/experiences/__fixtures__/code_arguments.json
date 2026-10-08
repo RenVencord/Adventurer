@@ -1,0 +1,314 @@
+{
+ "name": "code_arguments",
+ "scan": {
+  "ok": true,
+  "entities": [
+   {
+    "guid": "q",
+    "name": "Quest Manager",
+    "path": "Root/Quest Manager",
+    "enabled": true,
+    "tags": [],
+    "pos": [
+     0,
+     0,
+     0
+    ],
+    "scripts": [
+     {
+      "name": "discordQuestManager",
+      "enabled": true,
+      "attrs": {
+       "questCompleteEvent": "quest:complete",
+       "questProgressEvent": "quest:progress",
+       "enableDebugLogs": false,
+       "progressEvents": []
+      }
+     }
+    ]
+   },
+   {
+    "guid": "k",
+    "name": "Keypad",
+    "path": "Root/Keypad",
+    "enabled": true,
+    "tags": [
+     "interactable"
+    ],
+    "pos": [
+     0,
+     0,
+     0
+    ],
+    "scripts": [
+     {
+      "name": "keypad",
+      "enabled": true,
+      "attrs": {
+       "submitCodeEvent": "code:submit",
+       "keyEnterEvent": "key:enter"
+      }
+     }
+    ]
+   },
+   {
+    "guid": "l",
+    "name": "Lock",
+    "path": "Root/Lock",
+    "enabled": true,
+    "tags": [],
+    "pos": [
+     0,
+     0,
+     0
+    ],
+    "scripts": [
+     {
+      "name": "checkCodeOnEvent",
+      "enabled": true,
+      "attrs": {
+       "correctCode": "4821",
+       "eventToCheckOn": "code:submit",
+       "eventToEmitOnCorrect": "quest:complete",
+       "eventToEmitOnIncorrect": "code:bad"
+      }
+     }
+    ]
+   }
+  ]
+ },
+ "expected": {
+  "ok": true,
+  "hasQuestManager": true,
+  "scene": "",
+  "goalEvents": [
+   "quest:complete"
+  ],
+  "progressEvents": [
+   {
+    "event": "quest:progress",
+    "key": "quest:progress",
+    "progress": null
+   }
+  ],
+  "rootKeys": [
+   "quest:complete"
+  ],
+  "eventOrder": [
+   "quest:complete",
+   "quest:progress",
+   "key:enter",
+   "code:submit",
+   "code:bad"
+  ],
+  "events": {
+   "quest:complete": {
+    "key": "quest:complete",
+    "name": "quest:complete",
+    "scope": "app",
+    "entity": null,
+    "guid": null,
+    "firedBy": [
+     [
+      "Lock",
+      "checkCodeOnEvent",
+      "eventToEmitOnCorrect"
+     ]
+    ],
+    "listenedBy": [
+     [
+      "Quest Manager",
+      "discordQuestManager"
+     ]
+    ],
+    "isGoal": true,
+    "isProgress": false,
+    "progress": null,
+    "inGoalClosure": true,
+    "depth": 0,
+    "count": 1,
+    "origin": "derived",
+    "args": []
+   },
+   "quest:progress": {
+    "key": "quest:progress",
+    "name": "quest:progress",
+    "scope": "app",
+    "entity": null,
+    "guid": null,
+    "firedBy": [],
+    "listenedBy": [
+     [
+      "Quest Manager",
+      "discordQuestManager"
+     ]
+    ],
+    "isGoal": false,
+    "isProgress": true,
+    "progress": null,
+    "inGoalClosure": false,
+    "depth": null,
+    "count": 1,
+    "origin": "",
+    "args": []
+   },
+   "key:enter": {
+    "key": "key:enter",
+    "name": "key:enter",
+    "scope": "app",
+    "entity": null,
+    "guid": null,
+    "firedBy": [],
+    "listenedBy": [
+     [
+      "Keypad",
+      "keypad"
+     ]
+    ],
+    "isGoal": false,
+    "isProgress": false,
+    "progress": null,
+    "inGoalClosure": true,
+    "depth": 2,
+    "count": 1,
+    "origin": "external",
+    "args": []
+   },
+   "code:submit": {
+    "key": "code:submit",
+    "name": "code:submit",
+    "scope": "app",
+    "entity": null,
+    "guid": null,
+    "firedBy": [
+     [
+      "Keypad",
+      "keypad",
+      "submitCodeEvent"
+     ]
+    ],
+    "listenedBy": [
+     [
+      "Lock",
+      "checkCodeOnEvent"
+     ]
+    ],
+    "isGoal": false,
+    "isProgress": false,
+    "progress": null,
+    "inGoalClosure": true,
+    "depth": 1,
+    "count": 1,
+    "origin": "interaction",
+    "args": [
+     "4821"
+    ]
+   },
+   "code:bad": {
+    "key": "code:bad",
+    "name": "code:bad",
+    "scope": "app",
+    "entity": null,
+    "guid": null,
+    "firedBy": [
+     [
+      "Lock",
+      "checkCodeOnEvent",
+      "eventToEmitOnIncorrect"
+     ]
+    ],
+    "listenedBy": [],
+    "isGoal": false,
+    "isProgress": false,
+    "progress": null,
+    "inGoalClosure": false,
+    "depth": null,
+    "count": 1,
+    "origin": "",
+    "args": []
+   }
+  },
+  "edges": [
+   {
+    "entity": "Keypad",
+    "guid": "k",
+    "script": "keypad",
+    "outKey": "code:submit",
+    "outAttr": "submitCodeEvent",
+    "needs": [
+     {
+      "key": "key:enter",
+      "attr": "keyEnterEvent",
+      "count": 1,
+      "args": null
+     }
+    ]
+   },
+   {
+    "entity": "Lock",
+    "guid": "l",
+    "script": "checkCodeOnEvent",
+    "outKey": "quest:complete",
+    "outAttr": "eventToEmitOnCorrect",
+    "needs": [
+     {
+      "key": "code:submit",
+      "attr": "eventToCheckOn",
+      "count": 1,
+      "args": [
+       "4821"
+      ]
+     }
+    ]
+   },
+   {
+    "entity": "Lock",
+    "guid": "l",
+    "script": "checkCodeOnEvent",
+    "outKey": "code:bad",
+    "outAttr": "eventToEmitOnIncorrect",
+    "needs": [
+     {
+      "key": "code:submit",
+      "attr": "eventToCheckOn",
+      "count": 1,
+      "args": null
+     }
+    ]
+   }
+  ],
+  "interactables": [
+   {
+    "entity": "Keypad",
+    "guid": "k",
+    "tags": [
+     "interactable"
+    ],
+    "scripts": [
+     "keypad"
+    ],
+    "fires": [
+     "code:submit"
+    ],
+    "inClosure": true
+   }
+  ],
+  "closureKeys": [
+   "quest:complete",
+   "key:enter",
+   "code:submit"
+  ],
+  "closureOrder": [
+   "key:enter",
+   "code:submit",
+   "quest:complete"
+  ],
+  "objectiveNames": [
+   "Keypad"
+  ],
+  "objectiveGuids": [
+   "k"
+  ],
+  "entityCount": 3
+ }
+}

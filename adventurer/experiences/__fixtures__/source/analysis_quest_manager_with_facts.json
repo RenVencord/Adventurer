@@ -1,0 +1,390 @@
+{
+ "name": "quest_manager_with_facts",
+ "scan": {
+  "ok": true,
+  "scene": "Holo",
+  "applicationId": "123",
+  "entities": [
+   {
+    "guid": "q",
+    "name": "Quest Manager",
+    "path": "Root/Quest Manager",
+    "enabled": true,
+    "tags": [],
+    "pos": [
+     0,
+     0,
+     0
+    ],
+    "scripts": [
+     {
+      "name": "discordQuestManager",
+      "enabled": true,
+      "attrs": {
+       "questCompleteEvent": "quest:complete",
+       "questProgressEvent": "quest:progress",
+       "enableDebugLogs": false,
+       "progressEvents": [
+        {
+         "event": "quest:progress:1",
+         "progress": 1
+        },
+        {
+         "event": "quest:progress:2",
+         "progress": 2
+        },
+        {
+         "event": "quest:progress:3",
+         "progress": 3
+        }
+       ]
+      }
+     }
+    ]
+   },
+   {
+    "guid": "c0",
+    "name": "Cube A",
+    "path": "Root/Cube A",
+    "enabled": true,
+    "tags": [
+     "interactable"
+    ],
+    "pos": [
+     0,
+     0,
+     0
+    ],
+    "scripts": [
+     {
+      "name": "collectable",
+      "enabled": true,
+      "attrs": {
+       "itemId": "cubeA",
+       "collectedEvent": "cube:A:taken"
+      }
+     }
+    ]
+   },
+   {
+    "guid": "s0",
+    "name": "Slot A",
+    "path": "Root/Slot A",
+    "enabled": true,
+    "tags": [
+     "interactable"
+    ],
+    "pos": [
+     0,
+     0,
+     0
+    ],
+    "scripts": [
+     {
+      "name": "useItem",
+      "enabled": true,
+      "attrs": {
+       "itemId": "cubeA",
+       "oneUse": true,
+       "eventOnCorrectItemUsed": "holocube:inserted"
+      }
+     }
+    ]
+   },
+   {
+    "guid": "c1",
+    "name": "Cube B",
+    "path": "Root/Cube B",
+    "enabled": true,
+    "tags": [
+     "interactable"
+    ],
+    "pos": [
+     0,
+     0,
+     0
+    ],
+    "scripts": [
+     {
+      "name": "collectable",
+      "enabled": true,
+      "attrs": {
+       "itemId": "cubeB",
+       "collectedEvent": "cube:B:taken"
+      }
+     }
+    ]
+   },
+   {
+    "guid": "s1",
+    "name": "Slot B",
+    "path": "Root/Slot B",
+    "enabled": true,
+    "tags": [
+     "interactable"
+    ],
+    "pos": [
+     0,
+     0,
+     0
+    ],
+    "scripts": [
+     {
+      "name": "useItem",
+      "enabled": true,
+      "attrs": {
+       "itemId": "cubeB",
+       "oneUse": true,
+       "eventOnCorrectItemUsed": "holocube:inserted"
+      }
+     }
+    ]
+   },
+   {
+    "guid": "c2",
+    "name": "Cube C",
+    "path": "Root/Cube C",
+    "enabled": true,
+    "tags": [
+     "interactable"
+    ],
+    "pos": [
+     0,
+     0,
+     0
+    ],
+    "scripts": [
+     {
+      "name": "collectable",
+      "enabled": true,
+      "attrs": {
+       "itemId": "cubeC",
+       "collectedEvent": "cube:C:taken"
+      }
+     }
+    ]
+   },
+   {
+    "guid": "s2",
+    "name": "Slot C",
+    "path": "Root/Slot C",
+    "enabled": true,
+    "tags": [
+     "interactable"
+    ],
+    "pos": [
+     0,
+     0,
+     0
+    ],
+    "scripts": [
+     {
+      "name": "useItem",
+      "enabled": true,
+      "attrs": {
+       "itemId": "cubeC",
+       "oneUse": true,
+       "eventOnCorrectItemUsed": "holocube:inserted"
+      }
+     }
+    ]
+   },
+   {
+    "guid": "cnt",
+    "name": "Cube Counter",
+    "path": "Root/Cube Counter",
+    "enabled": true,
+    "tags": [],
+    "pos": [
+     0,
+     0,
+     0
+    ],
+    "scripts": [
+     {
+      "name": "countEvents",
+      "enabled": true,
+      "attrs": {
+       "eventToCount": "holocube:inserted",
+       "eventScope": "app",
+       "enableDebugLogs": false,
+       "counts": [
+        {
+         "targetCount": 1,
+         "eventToFireOnCountMet": "quest:progress:1"
+        },
+        {
+         "targetCount": 2,
+         "eventToFireOnCountMet": "quest:progress:2"
+        },
+        {
+         "targetCount": 3,
+         "eventToFireOnCountMet": "quest:progress:3"
+        }
+       ]
+      }
+     }
+    ]
+   },
+   {
+    "guid": "rel",
+    "name": "Finish Relay",
+    "path": "Root/Finish Relay",
+    "enabled": true,
+    "tags": [],
+    "pos": [
+     0,
+     0,
+     0
+    ],
+    "scripts": [
+     {
+      "name": "eventRelay",
+      "enabled": true,
+      "attrs": {
+       "triggerEvents": [
+        "quest:progress:3"
+       ],
+       "eventsToSend": [
+        {
+         "eventToSend": "quest:complete",
+         "delay": 0
+        }
+       ],
+       "eventScope": "app"
+      }
+     }
+    ]
+   },
+   {
+    "guid": "lb",
+    "name": "Lamp Button",
+    "path": "Root/Lamp Button",
+    "enabled": true,
+    "tags": [
+     "interactable"
+    ],
+    "pos": [
+     0,
+     0,
+     0
+    ],
+    "scripts": [
+     {
+      "name": "pushButton",
+      "enabled": true,
+      "attrs": {
+       "hasPower": false,
+       "onPushEvent": "lamp:toggle"
+      }
+     }
+    ]
+   },
+   {
+    "guid": "lr",
+    "name": "Lamp Relay",
+    "path": "Root/Lamp Relay",
+    "enabled": true,
+    "tags": [],
+    "pos": [
+     0,
+     0,
+     0
+    ],
+    "scripts": [
+     {
+      "name": "eventRelay",
+      "enabled": true,
+      "attrs": {
+       "triggerEvents": [
+        "lamp:toggle"
+       ],
+       "eventsToSend": [
+        {
+         "eventToSend": "lamp:glow",
+         "delay": 0.5
+        }
+       ]
+      }
+     }
+    ]
+   },
+   {
+    "guid": "lamp",
+    "name": "Lamp",
+    "path": "Root/Lamp",
+    "enabled": true,
+    "tags": [],
+    "pos": [
+     0,
+     0,
+     0
+    ],
+    "scripts": [
+     {
+      "name": "enableEntitiesOnEvent",
+      "enabled": true,
+      "attrs": {
+       "enableEvents": [
+        {
+         "enable": true,
+         "enableEvent": "lamp:glow",
+         "entities": []
+        }
+       ]
+      }
+     }
+    ]
+   }
+  ],
+  "listeners": {},
+  "truncated": {},
+  "scripts": {
+   "collectable": {
+    "n": 1,
+    "names": [
+     "_h",
+     "initialize"
+    ],
+    "m": {
+     "initialize": {
+      "o": [
+       [
+        "x:y",
+        "_h",
+        "a"
+       ]
+      ]
+     },
+     "_h": {
+      "f": [
+       "z:w"
+      ]
+     }
+    }
+   }
+  }
+ },
+ "knowledge": null,
+ "expected": {
+  "source": {
+   "available": true,
+   "found": false,
+   "scriptTypes": 1,
+   "listeners": 0,
+   "unattributed": 0,
+   "goal": "",
+   "goals": [],
+   "unreachedGoals": [],
+   "events": [],
+   "hops": [],
+   "owners": [],
+   "guards": [],
+   "entries": [],
+   "preferred": "",
+   "triggerNotes": [],
+   "notes": []
+  },
+  "recipe": null
+ }
+}

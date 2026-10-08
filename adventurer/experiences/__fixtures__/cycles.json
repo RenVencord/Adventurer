@@ -1,0 +1,284 @@
+{
+ "name": "cycles",
+ "scan": {
+  "ok": true,
+  "entities": [
+   {
+    "guid": "q",
+    "name": "Quest Manager",
+    "path": "Root/Quest Manager",
+    "enabled": true,
+    "tags": [],
+    "pos": [
+     0,
+     0,
+     0
+    ],
+    "scripts": [
+     {
+      "name": "discordQuestManager",
+      "enabled": true,
+      "attrs": {
+       "questCompleteEvent": "quest:complete",
+       "questProgressEvent": "quest:progress",
+       "enableDebugLogs": false,
+       "progressEvents": []
+      }
+     }
+    ]
+   },
+   {
+    "guid": "a",
+    "name": "A",
+    "path": "Root/A",
+    "enabled": true,
+    "tags": [],
+    "pos": [
+     0,
+     0,
+     0
+    ],
+    "scripts": [
+     {
+      "name": "eventRelay",
+      "enabled": true,
+      "attrs": {
+       "triggerEvents": [
+        "x:b"
+       ],
+       "eventsToSend": [
+        {
+         "eventToSend": "x:a"
+        }
+       ]
+      }
+     }
+    ]
+   },
+   {
+    "guid": "b",
+    "name": "B",
+    "path": "Root/B",
+    "enabled": true,
+    "tags": [],
+    "pos": [
+     0,
+     0,
+     0
+    ],
+    "scripts": [
+     {
+      "name": "eventRelay",
+      "enabled": true,
+      "attrs": {
+       "triggerEvents": [
+        "x:a"
+       ],
+       "eventsToSend": [
+        {
+         "eventToSend": "x:b"
+        },
+        {
+         "eventToSend": "quest:complete"
+        }
+       ]
+      }
+     }
+    ]
+   }
+  ]
+ },
+ "expected": {
+  "ok": true,
+  "hasQuestManager": true,
+  "scene": "",
+  "goalEvents": [
+   "quest:complete"
+  ],
+  "progressEvents": [
+   {
+    "event": "quest:progress",
+    "key": "quest:progress",
+    "progress": null
+   }
+  ],
+  "rootKeys": [
+   "quest:complete"
+  ],
+  "eventOrder": [
+   "quest:complete",
+   "quest:progress",
+   "x:b",
+   "x:a"
+  ],
+  "events": {
+   "quest:complete": {
+    "key": "quest:complete",
+    "name": "quest:complete",
+    "scope": "app",
+    "entity": null,
+    "guid": null,
+    "firedBy": [
+     [
+      "B",
+      "eventRelay",
+      "eventsToSend[1].eventToSend"
+     ]
+    ],
+    "listenedBy": [
+     [
+      "Quest Manager",
+      "discordQuestManager"
+     ]
+    ],
+    "isGoal": true,
+    "isProgress": false,
+    "progress": null,
+    "inGoalClosure": true,
+    "depth": 0,
+    "count": 1,
+    "origin": "derived",
+    "args": []
+   },
+   "quest:progress": {
+    "key": "quest:progress",
+    "name": "quest:progress",
+    "scope": "app",
+    "entity": null,
+    "guid": null,
+    "firedBy": [],
+    "listenedBy": [
+     [
+      "Quest Manager",
+      "discordQuestManager"
+     ]
+    ],
+    "isGoal": false,
+    "isProgress": true,
+    "progress": null,
+    "inGoalClosure": false,
+    "depth": null,
+    "count": 1,
+    "origin": "",
+    "args": []
+   },
+   "x:b": {
+    "key": "x:b",
+    "name": "x:b",
+    "scope": "app",
+    "entity": null,
+    "guid": null,
+    "firedBy": [
+     [
+      "B",
+      "eventRelay",
+      "eventsToSend[0].eventToSend"
+     ]
+    ],
+    "listenedBy": [
+     [
+      "A",
+      "eventRelay"
+     ]
+    ],
+    "isGoal": false,
+    "isProgress": false,
+    "progress": null,
+    "inGoalClosure": true,
+    "depth": 2,
+    "count": 1,
+    "origin": "derived",
+    "args": []
+   },
+   "x:a": {
+    "key": "x:a",
+    "name": "x:a",
+    "scope": "app",
+    "entity": null,
+    "guid": null,
+    "firedBy": [
+     [
+      "A",
+      "eventRelay",
+      "eventsToSend[0].eventToSend"
+     ]
+    ],
+    "listenedBy": [
+     [
+      "B",
+      "eventRelay"
+     ]
+    ],
+    "isGoal": false,
+    "isProgress": false,
+    "progress": null,
+    "inGoalClosure": true,
+    "depth": 1,
+    "count": 1,
+    "origin": "derived",
+    "args": []
+   }
+  },
+  "edges": [
+   {
+    "entity": "A",
+    "guid": "a",
+    "script": "eventRelay",
+    "outKey": "x:a",
+    "outAttr": "eventsToSend[0].eventToSend",
+    "needs": [
+     {
+      "key": "x:b",
+      "attr": "triggerEvents[0]",
+      "count": 1,
+      "args": null
+     }
+    ]
+   },
+   {
+    "entity": "B",
+    "guid": "b",
+    "script": "eventRelay",
+    "outKey": "x:b",
+    "outAttr": "eventsToSend[0].eventToSend",
+    "needs": [
+     {
+      "key": "x:a",
+      "attr": "triggerEvents[0]",
+      "count": 1,
+      "args": null
+     }
+    ]
+   },
+   {
+    "entity": "B",
+    "guid": "b",
+    "script": "eventRelay",
+    "outKey": "quest:complete",
+    "outAttr": "eventsToSend[1].eventToSend",
+    "needs": [
+     {
+      "key": "x:a",
+      "attr": "triggerEvents[0]",
+      "count": 1,
+      "args": null
+     }
+    ]
+   }
+  ],
+  "interactables": [],
+  "closureKeys": [
+   "quest:complete",
+   "x:b",
+   "x:a"
+  ],
+  "closureOrder": [
+   "x:b",
+   "x:a",
+   "quest:complete"
+  ],
+  "objectiveNames": [],
+  "objectiveGuids": [],
+  "entityCount": 3
+ }
+}

@@ -1,0 +1,437 @@
+{
+ "name": "focus_items_valid_items",
+ "scan": {
+  "ok": true,
+  "scene": "focus",
+  "entities": [
+   {
+    "guid": "q",
+    "name": "Quest Manager",
+    "path": "Root/Quest Manager",
+    "enabled": true,
+    "tags": [],
+    "pos": [
+     0,
+     0,
+     0
+    ],
+    "scripts": [
+     {
+      "name": "discordQuestManager",
+      "enabled": true,
+      "attrs": {
+       "questCompleteEvent": "quest:complete",
+       "questProgressEvent": "quest:progress",
+       "enableDebugLogs": false,
+       "progressEvents": []
+      }
+     }
+    ]
+   },
+   {
+    "guid": "k1",
+    "name": "Key",
+    "path": "Root/Key",
+    "enabled": true,
+    "tags": [],
+    "pos": [
+     0,
+     0,
+     0
+    ],
+    "scripts": [
+     {
+      "name": "focusItem",
+      "enabled": true,
+      "attrs": {
+       "core": {
+        "itemId": "brassKey"
+       },
+       "events": {
+        "onFocusedEvent": "key:focused"
+       }
+      }
+     },
+     {
+      "name": "focusItemTakeable",
+      "enabled": true,
+      "attrs": {
+       "takeEvent": "key:taken"
+      }
+     }
+    ]
+   },
+   {
+    "guid": "l1",
+    "name": "Lock",
+    "path": "Root/Lock",
+    "enabled": true,
+    "tags": [
+     "interactable"
+    ],
+    "pos": [
+     0,
+     0,
+     0
+    ],
+    "scripts": [
+     {
+      "name": "useItem",
+      "enabled": true,
+      "attrs": {
+       "itemId": "",
+       "validItems": [
+        {
+         "itemId": "brassKey",
+         "eventOnCorrectItemUsed": "quest:complete"
+        },
+        {
+         "itemId": "ghost",
+         "eventOnCorrectItemUsed": "ghost:used"
+        }
+       ]
+      }
+     }
+    ]
+   },
+   {
+    "guid": "t1",
+    "name": "Thing",
+    "path": "Root/Thing",
+    "enabled": true,
+    "tags": [
+     "interactable"
+    ],
+    "pos": [
+     0,
+     0,
+     0
+    ],
+    "scripts": [
+     {
+      "name": "mysteryThing",
+      "enabled": true,
+      "attrs": {
+       "clickEvent": "thing:clicked"
+      }
+     }
+    ]
+   }
+  ],
+  "truncated": {}
+ },
+ "expected": {
+  "ok": true,
+  "hasQuestManager": true,
+  "scene": "focus",
+  "goalEvents": [
+   "quest:complete"
+  ],
+  "progressEvents": [
+   {
+    "event": "quest:progress",
+    "key": "quest:progress",
+    "progress": null
+   }
+  ],
+  "rootKeys": [
+   "quest:complete"
+  ],
+  "eventOrder": [
+   "quest:complete",
+   "quest:progress",
+   "key:focused",
+   "key:taken",
+   "ghost:used",
+   "thing:clicked",
+   "item:brassKey"
+  ],
+  "events": {
+   "quest:complete": {
+    "key": "quest:complete",
+    "name": "quest:complete",
+    "scope": "app",
+    "entity": null,
+    "guid": null,
+    "firedBy": [
+     [
+      "Lock",
+      "useItem",
+      "validItems[0].eventOnCorrectItemUsed"
+     ]
+    ],
+    "listenedBy": [
+     [
+      "Quest Manager",
+      "discordQuestManager"
+     ]
+    ],
+    "isGoal": true,
+    "isProgress": false,
+    "progress": null,
+    "inGoalClosure": true,
+    "depth": 0,
+    "count": 1,
+    "origin": "interaction",
+    "args": []
+   },
+   "quest:progress": {
+    "key": "quest:progress",
+    "name": "quest:progress",
+    "scope": "app",
+    "entity": null,
+    "guid": null,
+    "firedBy": [],
+    "listenedBy": [
+     [
+      "Quest Manager",
+      "discordQuestManager"
+     ]
+    ],
+    "isGoal": false,
+    "isProgress": true,
+    "progress": null,
+    "inGoalClosure": false,
+    "depth": null,
+    "count": 1,
+    "origin": "",
+    "args": []
+   },
+   "key:focused": {
+    "key": "key:focused",
+    "name": "key:focused",
+    "scope": "app",
+    "entity": null,
+    "guid": null,
+    "firedBy": [
+     [
+      "Key",
+      "focusItem",
+      "events.onFocusedEvent"
+     ]
+    ],
+    "listenedBy": [],
+    "isGoal": false,
+    "isProgress": false,
+    "progress": null,
+    "inGoalClosure": false,
+    "depth": null,
+    "count": 1,
+    "origin": "",
+    "args": []
+   },
+   "key:taken": {
+    "key": "key:taken",
+    "name": "key:taken",
+    "scope": "app",
+    "entity": null,
+    "guid": null,
+    "firedBy": [
+     [
+      "Key",
+      "focusItemTakeable",
+      "takeEvent"
+     ]
+    ],
+    "listenedBy": [],
+    "isGoal": false,
+    "isProgress": false,
+    "progress": null,
+    "inGoalClosure": false,
+    "depth": null,
+    "count": 1,
+    "origin": "",
+    "args": []
+   },
+   "ghost:used": {
+    "key": "ghost:used",
+    "name": "ghost:used",
+    "scope": "app",
+    "entity": null,
+    "guid": null,
+    "firedBy": [
+     [
+      "Lock",
+      "useItem",
+      "validItems[1].eventOnCorrectItemUsed"
+     ]
+    ],
+    "listenedBy": [],
+    "isGoal": false,
+    "isProgress": false,
+    "progress": null,
+    "inGoalClosure": false,
+    "depth": null,
+    "count": 1,
+    "origin": "",
+    "args": []
+   },
+   "thing:clicked": {
+    "key": "thing:clicked",
+    "name": "thing:clicked",
+    "scope": "app",
+    "entity": null,
+    "guid": null,
+    "firedBy": [
+     [
+      "Thing",
+      "mysteryThing",
+      "clickEvent"
+     ]
+    ],
+    "listenedBy": [],
+    "isGoal": false,
+    "isProgress": false,
+    "progress": null,
+    "inGoalClosure": false,
+    "depth": null,
+    "count": 1,
+    "origin": "",
+    "args": []
+   },
+   "item:brassKey": {
+    "key": "item:brassKey",
+    "name": "brassKey",
+    "scope": "item",
+    "entity": null,
+    "guid": null,
+    "firedBy": [
+     [
+      "Key",
+      "focusItem",
+      "core.itemId"
+     ]
+    ],
+    "listenedBy": [],
+    "isGoal": false,
+    "isProgress": false,
+    "progress": null,
+    "inGoalClosure": true,
+    "depth": 1,
+    "count": 1,
+    "origin": "interaction",
+    "args": []
+   }
+  },
+  "edges": [
+   {
+    "entity": "Key",
+    "guid": "k1",
+    "script": "focusItem",
+    "outKey": "key:focused",
+    "outAttr": "events.onFocusedEvent",
+    "needs": []
+   },
+   {
+    "entity": "Key",
+    "guid": "k1",
+    "script": "focusItemTakeable",
+    "outKey": "key:taken",
+    "outAttr": "takeEvent",
+    "needs": []
+   },
+   {
+    "entity": "Lock",
+    "guid": "l1",
+    "script": "useItem",
+    "outKey": "quest:complete",
+    "outAttr": "validItems[0].eventOnCorrectItemUsed",
+    "needs": [
+     {
+      "key": "item:brassKey",
+      "attr": "itemId",
+      "count": 1,
+      "args": null
+     }
+    ]
+   },
+   {
+    "entity": "Lock",
+    "guid": "l1",
+    "script": "useItem",
+    "outKey": "ghost:used",
+    "outAttr": "validItems[1].eventOnCorrectItemUsed",
+    "needs": []
+   },
+   {
+    "entity": "Thing",
+    "guid": "t1",
+    "script": "mysteryThing",
+    "outKey": "thing:clicked",
+    "outAttr": "clickEvent",
+    "needs": []
+   },
+   {
+    "entity": "Key",
+    "guid": "k1",
+    "script": "focusItem",
+    "outKey": "item:brassKey",
+    "outAttr": "core.itemId",
+    "needs": []
+   }
+  ],
+  "interactables": [
+   {
+    "entity": "Key",
+    "guid": "k1",
+    "tags": [],
+    "scripts": [
+     "focusItem",
+     "focusItemTakeable"
+    ],
+    "fires": [
+     "key:focused",
+     "key:taken",
+     "item:brassKey"
+    ],
+    "inClosure": true
+   },
+   {
+    "entity": "Lock",
+    "guid": "l1",
+    "tags": [
+     "interactable"
+    ],
+    "scripts": [
+     "useItem"
+    ],
+    "fires": [
+     "quest:complete",
+     "ghost:used"
+    ],
+    "inClosure": true
+   },
+   {
+    "entity": "Thing",
+    "guid": "t1",
+    "tags": [
+     "interactable"
+    ],
+    "scripts": [
+     "mysteryThing"
+    ],
+    "fires": [
+     "thing:clicked"
+    ],
+    "inClosure": false
+   }
+  ],
+  "closureKeys": [
+   "quest:complete",
+   "item:brassKey"
+  ],
+  "closureOrder": [
+   "item:brassKey",
+   "quest:complete"
+  ],
+  "objectiveNames": [
+   "Key",
+   "Lock"
+  ],
+  "objectiveGuids": [
+   "k1",
+   "l1"
+  ],
+  "entityCount": 4
+ }
+}

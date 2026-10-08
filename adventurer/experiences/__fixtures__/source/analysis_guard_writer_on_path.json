@@ -1,0 +1,281 @@
+{
+ "name": "guard_writer_on_path",
+ "scan": {
+  "ok": true,
+  "scene": "Game",
+  "applicationId": "42",
+  "entities": [
+   {
+    "guid": "d",
+    "name": "Dir",
+    "path": "Root/Dir",
+    "enabled": true,
+    "tags": [],
+    "pos": [
+     0,
+     0,
+     0
+    ],
+    "scripts": [
+     {
+      "name": "store",
+      "enabled": true,
+      "attrs": {}
+     },
+     {
+      "name": "rewards",
+      "enabled": true,
+      "attrs": {}
+     }
+    ]
+   }
+  ],
+  "scripts": {
+   "store": {
+    "n": 1,
+    "names": [
+     "initialize",
+     "record"
+    ],
+    "m": {
+     "initialize": {
+      "o": [
+       [
+        "game:over",
+        "record",
+        "a"
+       ]
+      ],
+      "r": [
+       "record"
+      ]
+     },
+     "record": {
+      "f": [
+       "run:saved"
+      ],
+      "sw": [
+       "_levels[]",
+       "_levels[].completed"
+      ],
+      "pr": {
+       "score": "n"
+      }
+     }
+    }
+   },
+   "rewards": {
+    "n": 1,
+    "names": [
+     "_onSaved",
+     "initialize"
+    ],
+    "m": {
+     "initialize": {
+      "o": [
+       [
+        "run:saved",
+        "_onSaved",
+        "a"
+       ]
+      ],
+      "r": [
+       "_onSaved"
+      ]
+     },
+     "_onSaved": {
+      "f": [
+       "arise:questComplete"
+      ],
+      "st": [
+       "_done"
+      ],
+      "xr": [
+       "store:_levels",
+       "store:_levels[].completed"
+      ],
+      "sw": [
+       "_done"
+      ]
+     }
+    }
+   }
+  },
+  "listeners": {},
+  "truncated": {}
+ },
+ "knowledge": null,
+ "expected": {
+  "source": {
+   "available": true,
+   "found": true,
+   "scriptTypes": 2,
+   "listeners": 0,
+   "unattributed": 0,
+   "goal": "arise:questComplete",
+   "goals": [
+    {
+     "key": "arise:questComplete",
+     "strength": 3,
+     "learned": false
+    }
+   ],
+   "unreachedGoals": [],
+   "events": [
+    {
+     "key": "arise:questComplete",
+     "name": "arise:questComplete",
+     "scope": "app",
+     "entity": null,
+     "depth": 0,
+     "root": false
+    },
+    {
+     "key": "run:saved",
+     "name": "run:saved",
+     "scope": "app",
+     "entity": null,
+     "depth": 1,
+     "root": false
+    },
+    {
+     "key": "game:over",
+     "name": "game:over",
+     "scope": "app",
+     "entity": null,
+     "depth": 2,
+     "root": true
+    }
+   ],
+   "hops": [
+    {
+     "src": "run:saved",
+     "dst": "arise:questComplete",
+     "how": "static",
+     "ambiguous": false,
+     "approximate": false,
+     "path": "rewards._onSaved",
+     "steps": [
+      {
+       "script": "rewards",
+       "entity": "Dir",
+       "method": "_onSaved",
+       "inst": 1,
+       "how": "handler",
+       "approximate": false
+      }
+     ]
+    },
+    {
+     "src": "game:over",
+     "dst": "run:saved",
+     "how": "static",
+     "ambiguous": false,
+     "approximate": false,
+     "path": "store.record",
+     "steps": [
+      {
+       "script": "store",
+       "entity": "Dir",
+       "method": "record",
+       "inst": 0,
+       "how": "handler",
+       "approximate": false
+      }
+     ]
+    }
+   ],
+   "owners": [],
+   "guards": [
+    {
+     "state": "store._levels[].completed",
+     "foreign": true,
+     "readers": [
+      "rewards._onSaved"
+     ],
+     "text": "store._levels[].completed (read by rewards._onSaved) is written by store.record when game:over is handled (store.record)",
+     "writers": [
+      {
+       "method": "store.record",
+       "events": [
+        "game:over"
+       ],
+       "via": "store.record",
+       "onPath": false
+      }
+     ]
+    },
+    {
+     "state": "rewards._done",
+     "foreign": false,
+     "readers": [
+      "rewards._onSaved"
+     ],
+     "text": "rewards._done (read by rewards._onSaved) is written by rewards._onSaved when run:saved is handled (rewards._onSaved)",
+     "writers": [
+      {
+       "method": "rewards._onSaved",
+       "events": [
+        "run:saved"
+       ],
+       "via": "rewards._onSaved",
+       "onPath": true
+      }
+     ]
+    }
+   ],
+   "entries": [
+    {
+     "name": "game:over",
+     "depth": 2,
+     "approximate": false,
+     "guardOk": true,
+     "fields": {
+      "score": "n"
+     },
+     "note": "guard: _levels[].completed written by store.record via store.record"
+    },
+    {
+     "name": "run:saved",
+     "depth": 1,
+     "approximate": false,
+     "guardOk": false,
+     "fields": {},
+     "note": "does not run the state writer the goal path depends on, so it only works if that state is already set"
+    }
+   ],
+   "preferred": "game:over",
+   "triggerNotes": [],
+   "notes": []
+  },
+  "recipe": {
+   "version": 1,
+   "goal": "arise:questComplete",
+   "triggers": [],
+   "entries": [
+    {
+     "name": "game:over",
+     "scope": "app",
+     "args": [
+      {
+       "score": 0
+      }
+     ],
+     "source": "inferred"
+    },
+    {
+     "name": "run:saved",
+     "scope": "app",
+     "args": [],
+     "source": "inferred"
+    }
+   ],
+   "suppress": [
+    "leaderboard"
+   ],
+   "delay_ms": 0,
+   "notes": "arise:questComplete is fired by rewards._onSaved, reached from run:saved via rewards._onSaved. game:over is listed first: the state the goal path checks is written when it is handled (_levels[].completed written by store.record via store.record); events closer to the goal skip that write.",
+   "source": "guessed"
+  }
+ }
+}

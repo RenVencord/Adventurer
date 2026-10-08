@@ -1,0 +1,1036 @@
+{
+ "name": "holocube_no_progress",
+ "scan": {
+  "ok": true,
+  "scene": "Holo",
+  "applicationId": "123",
+  "entities": [
+   {
+    "guid": "q",
+    "name": "Quest Manager",
+    "path": "Root/Quest Manager",
+    "enabled": true,
+    "tags": [],
+    "pos": [
+     0,
+     0,
+     0
+    ],
+    "scripts": [
+     {
+      "name": "discordQuestManager",
+      "enabled": true,
+      "attrs": {
+       "questCompleteEvent": "quest:complete",
+       "questProgressEvent": "quest:progress",
+       "enableDebugLogs": false,
+       "progressEvents": []
+      }
+     }
+    ]
+   },
+   {
+    "guid": "c0",
+    "name": "Cube A",
+    "path": "Root/Cube A",
+    "enabled": true,
+    "tags": [
+     "interactable"
+    ],
+    "pos": [
+     0,
+     0,
+     0
+    ],
+    "scripts": [
+     {
+      "name": "collectable",
+      "enabled": true,
+      "attrs": {
+       "itemId": "cubeA",
+       "collectedEvent": "cube:A:taken"
+      }
+     }
+    ]
+   },
+   {
+    "guid": "s0",
+    "name": "Slot A",
+    "path": "Root/Slot A",
+    "enabled": true,
+    "tags": [
+     "interactable"
+    ],
+    "pos": [
+     0,
+     0,
+     0
+    ],
+    "scripts": [
+     {
+      "name": "useItem",
+      "enabled": true,
+      "attrs": {
+       "itemId": "cubeA",
+       "oneUse": true,
+       "eventOnCorrectItemUsed": "holocube:inserted"
+      }
+     }
+    ]
+   },
+   {
+    "guid": "c1",
+    "name": "Cube B",
+    "path": "Root/Cube B",
+    "enabled": true,
+    "tags": [
+     "interactable"
+    ],
+    "pos": [
+     0,
+     0,
+     0
+    ],
+    "scripts": [
+     {
+      "name": "collectable",
+      "enabled": true,
+      "attrs": {
+       "itemId": "cubeB",
+       "collectedEvent": "cube:B:taken"
+      }
+     }
+    ]
+   },
+   {
+    "guid": "s1",
+    "name": "Slot B",
+    "path": "Root/Slot B",
+    "enabled": true,
+    "tags": [
+     "interactable"
+    ],
+    "pos": [
+     0,
+     0,
+     0
+    ],
+    "scripts": [
+     {
+      "name": "useItem",
+      "enabled": true,
+      "attrs": {
+       "itemId": "cubeB",
+       "oneUse": true,
+       "eventOnCorrectItemUsed": "holocube:inserted"
+      }
+     }
+    ]
+   },
+   {
+    "guid": "c2",
+    "name": "Cube C",
+    "path": "Root/Cube C",
+    "enabled": true,
+    "tags": [
+     "interactable"
+    ],
+    "pos": [
+     0,
+     0,
+     0
+    ],
+    "scripts": [
+     {
+      "name": "collectable",
+      "enabled": true,
+      "attrs": {
+       "itemId": "cubeC",
+       "collectedEvent": "cube:C:taken"
+      }
+     }
+    ]
+   },
+   {
+    "guid": "s2",
+    "name": "Slot C",
+    "path": "Root/Slot C",
+    "enabled": true,
+    "tags": [
+     "interactable"
+    ],
+    "pos": [
+     0,
+     0,
+     0
+    ],
+    "scripts": [
+     {
+      "name": "useItem",
+      "enabled": true,
+      "attrs": {
+       "itemId": "cubeC",
+       "oneUse": true,
+       "eventOnCorrectItemUsed": "holocube:inserted"
+      }
+     }
+    ]
+   },
+   {
+    "guid": "cnt",
+    "name": "Cube Counter",
+    "path": "Root/Cube Counter",
+    "enabled": true,
+    "tags": [],
+    "pos": [
+     0,
+     0,
+     0
+    ],
+    "scripts": [
+     {
+      "name": "countEvents",
+      "enabled": true,
+      "attrs": {
+       "eventToCount": "holocube:inserted",
+       "eventScope": "app",
+       "enableDebugLogs": false,
+       "counts": [
+        {
+         "targetCount": 1,
+         "eventToFireOnCountMet": "quest:progress:1"
+        },
+        {
+         "targetCount": 2,
+         "eventToFireOnCountMet": "quest:progress:2"
+        },
+        {
+         "targetCount": 3,
+         "eventToFireOnCountMet": "quest:progress:3"
+        }
+       ]
+      }
+     }
+    ]
+   },
+   {
+    "guid": "rel",
+    "name": "Finish Relay",
+    "path": "Root/Finish Relay",
+    "enabled": true,
+    "tags": [],
+    "pos": [
+     0,
+     0,
+     0
+    ],
+    "scripts": [
+     {
+      "name": "eventRelay",
+      "enabled": true,
+      "attrs": {
+       "triggerEvents": [
+        "quest:progress:3"
+       ],
+       "eventsToSend": [
+        {
+         "eventToSend": "quest:complete",
+         "delay": 0
+        }
+       ],
+       "eventScope": "app"
+      }
+     }
+    ]
+   },
+   {
+    "guid": "lb",
+    "name": "Lamp Button",
+    "path": "Root/Lamp Button",
+    "enabled": true,
+    "tags": [
+     "interactable"
+    ],
+    "pos": [
+     0,
+     0,
+     0
+    ],
+    "scripts": [
+     {
+      "name": "pushButton",
+      "enabled": true,
+      "attrs": {
+       "hasPower": false,
+       "onPushEvent": "lamp:toggle"
+      }
+     }
+    ]
+   },
+   {
+    "guid": "lr",
+    "name": "Lamp Relay",
+    "path": "Root/Lamp Relay",
+    "enabled": true,
+    "tags": [],
+    "pos": [
+     0,
+     0,
+     0
+    ],
+    "scripts": [
+     {
+      "name": "eventRelay",
+      "enabled": true,
+      "attrs": {
+       "triggerEvents": [
+        "lamp:toggle"
+       ],
+       "eventsToSend": [
+        {
+         "eventToSend": "lamp:glow",
+         "delay": 0.5
+        }
+       ]
+      }
+     }
+    ]
+   },
+   {
+    "guid": "lamp",
+    "name": "Lamp",
+    "path": "Root/Lamp",
+    "enabled": true,
+    "tags": [],
+    "pos": [
+     0,
+     0,
+     0
+    ],
+    "scripts": [
+     {
+      "name": "enableEntitiesOnEvent",
+      "enabled": true,
+      "attrs": {
+       "enableEvents": [
+        {
+         "enable": true,
+         "enableEvent": "lamp:glow",
+         "entities": []
+        }
+       ]
+      }
+     }
+    ]
+   }
+  ],
+  "listeners": {},
+  "truncated": {}
+ },
+ "expected": {
+  "ok": true,
+  "hasQuestManager": true,
+  "scene": "Holo",
+  "goalEvents": [
+   "quest:complete"
+  ],
+  "progressEvents": [
+   {
+    "event": "quest:progress",
+    "key": "quest:progress",
+    "progress": null
+   }
+  ],
+  "rootKeys": [
+   "quest:complete"
+  ],
+  "eventOrder": [
+   "quest:complete",
+   "quest:progress",
+   "cube:A:taken",
+   "holocube:inserted",
+   "cube:B:taken",
+   "cube:C:taken",
+   "quest:progress:1",
+   "quest:progress:2",
+   "quest:progress:3",
+   "lamp:toggle",
+   "lamp:glow",
+   "item:cubeA",
+   "item:cubeB",
+   "item:cubeC"
+  ],
+  "events": {
+   "quest:complete": {
+    "key": "quest:complete",
+    "name": "quest:complete",
+    "scope": "app",
+    "entity": null,
+    "guid": null,
+    "firedBy": [
+     [
+      "Finish Relay",
+      "eventRelay",
+      "eventsToSend[0].eventToSend"
+     ]
+    ],
+    "listenedBy": [
+     [
+      "Quest Manager",
+      "discordQuestManager"
+     ]
+    ],
+    "isGoal": true,
+    "isProgress": false,
+    "progress": null,
+    "inGoalClosure": true,
+    "depth": 0,
+    "count": 1,
+    "origin": "derived",
+    "args": []
+   },
+   "quest:progress": {
+    "key": "quest:progress",
+    "name": "quest:progress",
+    "scope": "app",
+    "entity": null,
+    "guid": null,
+    "firedBy": [],
+    "listenedBy": [
+     [
+      "Quest Manager",
+      "discordQuestManager"
+     ]
+    ],
+    "isGoal": false,
+    "isProgress": true,
+    "progress": null,
+    "inGoalClosure": false,
+    "depth": null,
+    "count": 1,
+    "origin": "",
+    "args": []
+   },
+   "cube:A:taken": {
+    "key": "cube:A:taken",
+    "name": "cube:A:taken",
+    "scope": "app",
+    "entity": null,
+    "guid": null,
+    "firedBy": [
+     [
+      "Cube A",
+      "collectable",
+      "collectedEvent"
+     ]
+    ],
+    "listenedBy": [],
+    "isGoal": false,
+    "isProgress": false,
+    "progress": null,
+    "inGoalClosure": false,
+    "depth": null,
+    "count": 1,
+    "origin": "",
+    "args": []
+   },
+   "holocube:inserted": {
+    "key": "holocube:inserted",
+    "name": "holocube:inserted",
+    "scope": "app",
+    "entity": null,
+    "guid": null,
+    "firedBy": [
+     [
+      "Slot A",
+      "useItem",
+      "eventOnCorrectItemUsed"
+     ],
+     [
+      "Slot B",
+      "useItem",
+      "eventOnCorrectItemUsed"
+     ],
+     [
+      "Slot C",
+      "useItem",
+      "eventOnCorrectItemUsed"
+     ]
+    ],
+    "listenedBy": [
+     [
+      "Cube Counter",
+      "countEvents"
+     ]
+    ],
+    "isGoal": false,
+    "isProgress": false,
+    "progress": null,
+    "inGoalClosure": true,
+    "depth": 2,
+    "count": 3,
+    "origin": "interaction",
+    "args": []
+   },
+   "cube:B:taken": {
+    "key": "cube:B:taken",
+    "name": "cube:B:taken",
+    "scope": "app",
+    "entity": null,
+    "guid": null,
+    "firedBy": [
+     [
+      "Cube B",
+      "collectable",
+      "collectedEvent"
+     ]
+    ],
+    "listenedBy": [],
+    "isGoal": false,
+    "isProgress": false,
+    "progress": null,
+    "inGoalClosure": false,
+    "depth": null,
+    "count": 1,
+    "origin": "",
+    "args": []
+   },
+   "cube:C:taken": {
+    "key": "cube:C:taken",
+    "name": "cube:C:taken",
+    "scope": "app",
+    "entity": null,
+    "guid": null,
+    "firedBy": [
+     [
+      "Cube C",
+      "collectable",
+      "collectedEvent"
+     ]
+    ],
+    "listenedBy": [],
+    "isGoal": false,
+    "isProgress": false,
+    "progress": null,
+    "inGoalClosure": false,
+    "depth": null,
+    "count": 1,
+    "origin": "",
+    "args": []
+   },
+   "quest:progress:1": {
+    "key": "quest:progress:1",
+    "name": "quest:progress:1",
+    "scope": "app",
+    "entity": null,
+    "guid": null,
+    "firedBy": [
+     [
+      "Cube Counter",
+      "countEvents",
+      "counts[0].eventToFireOnCountMet"
+     ]
+    ],
+    "listenedBy": [],
+    "isGoal": false,
+    "isProgress": false,
+    "progress": null,
+    "inGoalClosure": false,
+    "depth": null,
+    "count": 1,
+    "origin": "",
+    "args": []
+   },
+   "quest:progress:2": {
+    "key": "quest:progress:2",
+    "name": "quest:progress:2",
+    "scope": "app",
+    "entity": null,
+    "guid": null,
+    "firedBy": [
+     [
+      "Cube Counter",
+      "countEvents",
+      "counts[1].eventToFireOnCountMet"
+     ]
+    ],
+    "listenedBy": [],
+    "isGoal": false,
+    "isProgress": false,
+    "progress": null,
+    "inGoalClosure": false,
+    "depth": null,
+    "count": 1,
+    "origin": "",
+    "args": []
+   },
+   "quest:progress:3": {
+    "key": "quest:progress:3",
+    "name": "quest:progress:3",
+    "scope": "app",
+    "entity": null,
+    "guid": null,
+    "firedBy": [
+     [
+      "Cube Counter",
+      "countEvents",
+      "counts[2].eventToFireOnCountMet"
+     ]
+    ],
+    "listenedBy": [
+     [
+      "Finish Relay",
+      "eventRelay"
+     ]
+    ],
+    "isGoal": false,
+    "isProgress": false,
+    "progress": null,
+    "inGoalClosure": true,
+    "depth": 1,
+    "count": 1,
+    "origin": "derived",
+    "args": []
+   },
+   "lamp:toggle": {
+    "key": "lamp:toggle",
+    "name": "lamp:toggle",
+    "scope": "app",
+    "entity": null,
+    "guid": null,
+    "firedBy": [
+     [
+      "Lamp Button",
+      "pushButton",
+      "onPushEvent"
+     ]
+    ],
+    "listenedBy": [
+     [
+      "Lamp Relay",
+      "eventRelay"
+     ]
+    ],
+    "isGoal": false,
+    "isProgress": false,
+    "progress": null,
+    "inGoalClosure": false,
+    "depth": null,
+    "count": 1,
+    "origin": "",
+    "args": []
+   },
+   "lamp:glow": {
+    "key": "lamp:glow",
+    "name": "lamp:glow",
+    "scope": "app",
+    "entity": null,
+    "guid": null,
+    "firedBy": [
+     [
+      "Lamp Relay",
+      "eventRelay",
+      "eventsToSend[0].eventToSend"
+     ]
+    ],
+    "listenedBy": [
+     [
+      "Lamp",
+      "enableEntitiesOnEvent"
+     ]
+    ],
+    "isGoal": false,
+    "isProgress": false,
+    "progress": null,
+    "inGoalClosure": false,
+    "depth": null,
+    "count": 1,
+    "origin": "",
+    "args": []
+   },
+   "item:cubeA": {
+    "key": "item:cubeA",
+    "name": "cubeA",
+    "scope": "item",
+    "entity": null,
+    "guid": null,
+    "firedBy": [
+     [
+      "Cube A",
+      "collectable",
+      "itemId"
+     ]
+    ],
+    "listenedBy": [],
+    "isGoal": false,
+    "isProgress": false,
+    "progress": null,
+    "inGoalClosure": true,
+    "depth": 3,
+    "count": 1,
+    "origin": "interaction",
+    "args": []
+   },
+   "item:cubeB": {
+    "key": "item:cubeB",
+    "name": "cubeB",
+    "scope": "item",
+    "entity": null,
+    "guid": null,
+    "firedBy": [
+     [
+      "Cube B",
+      "collectable",
+      "itemId"
+     ]
+    ],
+    "listenedBy": [],
+    "isGoal": false,
+    "isProgress": false,
+    "progress": null,
+    "inGoalClosure": true,
+    "depth": 3,
+    "count": 1,
+    "origin": "interaction",
+    "args": []
+   },
+   "item:cubeC": {
+    "key": "item:cubeC",
+    "name": "cubeC",
+    "scope": "item",
+    "entity": null,
+    "guid": null,
+    "firedBy": [
+     [
+      "Cube C",
+      "collectable",
+      "itemId"
+     ]
+    ],
+    "listenedBy": [],
+    "isGoal": false,
+    "isProgress": false,
+    "progress": null,
+    "inGoalClosure": true,
+    "depth": 3,
+    "count": 1,
+    "origin": "interaction",
+    "args": []
+   }
+  },
+  "edges": [
+   {
+    "entity": "Cube A",
+    "guid": "c0",
+    "script": "collectable",
+    "outKey": "cube:A:taken",
+    "outAttr": "collectedEvent",
+    "needs": []
+   },
+   {
+    "entity": "Slot A",
+    "guid": "s0",
+    "script": "useItem",
+    "outKey": "holocube:inserted",
+    "outAttr": "eventOnCorrectItemUsed",
+    "needs": [
+     {
+      "key": "item:cubeA",
+      "attr": "itemId",
+      "count": 1,
+      "args": null
+     }
+    ]
+   },
+   {
+    "entity": "Cube B",
+    "guid": "c1",
+    "script": "collectable",
+    "outKey": "cube:B:taken",
+    "outAttr": "collectedEvent",
+    "needs": []
+   },
+   {
+    "entity": "Slot B",
+    "guid": "s1",
+    "script": "useItem",
+    "outKey": "holocube:inserted",
+    "outAttr": "eventOnCorrectItemUsed",
+    "needs": [
+     {
+      "key": "item:cubeB",
+      "attr": "itemId",
+      "count": 1,
+      "args": null
+     }
+    ]
+   },
+   {
+    "entity": "Cube C",
+    "guid": "c2",
+    "script": "collectable",
+    "outKey": "cube:C:taken",
+    "outAttr": "collectedEvent",
+    "needs": []
+   },
+   {
+    "entity": "Slot C",
+    "guid": "s2",
+    "script": "useItem",
+    "outKey": "holocube:inserted",
+    "outAttr": "eventOnCorrectItemUsed",
+    "needs": [
+     {
+      "key": "item:cubeC",
+      "attr": "itemId",
+      "count": 1,
+      "args": null
+     }
+    ]
+   },
+   {
+    "entity": "Cube Counter",
+    "guid": "cnt",
+    "script": "countEvents",
+    "outKey": "quest:progress:1",
+    "outAttr": "counts[0].eventToFireOnCountMet",
+    "needs": [
+     {
+      "key": "holocube:inserted",
+      "attr": "eventToCount",
+      "count": 1,
+      "args": null
+     }
+    ]
+   },
+   {
+    "entity": "Cube Counter",
+    "guid": "cnt",
+    "script": "countEvents",
+    "outKey": "quest:progress:2",
+    "outAttr": "counts[1].eventToFireOnCountMet",
+    "needs": [
+     {
+      "key": "holocube:inserted",
+      "attr": "eventToCount",
+      "count": 2,
+      "args": null
+     }
+    ]
+   },
+   {
+    "entity": "Cube Counter",
+    "guid": "cnt",
+    "script": "countEvents",
+    "outKey": "quest:progress:3",
+    "outAttr": "counts[2].eventToFireOnCountMet",
+    "needs": [
+     {
+      "key": "holocube:inserted",
+      "attr": "eventToCount",
+      "count": 3,
+      "args": null
+     }
+    ]
+   },
+   {
+    "entity": "Finish Relay",
+    "guid": "rel",
+    "script": "eventRelay",
+    "outKey": "quest:complete",
+    "outAttr": "eventsToSend[0].eventToSend",
+    "needs": [
+     {
+      "key": "quest:progress:3",
+      "attr": "triggerEvents[0]",
+      "count": 1,
+      "args": null
+     }
+    ]
+   },
+   {
+    "entity": "Lamp Button",
+    "guid": "lb",
+    "script": "pushButton",
+    "outKey": "lamp:toggle",
+    "outAttr": "onPushEvent",
+    "needs": []
+   },
+   {
+    "entity": "Lamp Relay",
+    "guid": "lr",
+    "script": "eventRelay",
+    "outKey": "lamp:glow",
+    "outAttr": "eventsToSend[0].eventToSend",
+    "needs": [
+     {
+      "key": "lamp:toggle",
+      "attr": "triggerEvents[0]",
+      "count": 1,
+      "args": null
+     }
+    ]
+   },
+   {
+    "entity": "Cube A",
+    "guid": "c0",
+    "script": "collectable",
+    "outKey": "item:cubeA",
+    "outAttr": "itemId",
+    "needs": []
+   },
+   {
+    "entity": "Cube B",
+    "guid": "c1",
+    "script": "collectable",
+    "outKey": "item:cubeB",
+    "outAttr": "itemId",
+    "needs": []
+   },
+   {
+    "entity": "Cube C",
+    "guid": "c2",
+    "script": "collectable",
+    "outKey": "item:cubeC",
+    "outAttr": "itemId",
+    "needs": []
+   }
+  ],
+  "interactables": [
+   {
+    "entity": "Cube A",
+    "guid": "c0",
+    "tags": [
+     "interactable"
+    ],
+    "scripts": [
+     "collectable"
+    ],
+    "fires": [
+     "cube:A:taken",
+     "item:cubeA"
+    ],
+    "inClosure": true
+   },
+   {
+    "entity": "Slot A",
+    "guid": "s0",
+    "tags": [
+     "interactable"
+    ],
+    "scripts": [
+     "useItem"
+    ],
+    "fires": [
+     "holocube:inserted"
+    ],
+    "inClosure": true
+   },
+   {
+    "entity": "Cube B",
+    "guid": "c1",
+    "tags": [
+     "interactable"
+    ],
+    "scripts": [
+     "collectable"
+    ],
+    "fires": [
+     "cube:B:taken",
+     "item:cubeB"
+    ],
+    "inClosure": true
+   },
+   {
+    "entity": "Slot B",
+    "guid": "s1",
+    "tags": [
+     "interactable"
+    ],
+    "scripts": [
+     "useItem"
+    ],
+    "fires": [
+     "holocube:inserted"
+    ],
+    "inClosure": true
+   },
+   {
+    "entity": "Cube C",
+    "guid": "c2",
+    "tags": [
+     "interactable"
+    ],
+    "scripts": [
+     "collectable"
+    ],
+    "fires": [
+     "cube:C:taken",
+     "item:cubeC"
+    ],
+    "inClosure": true
+   },
+   {
+    "entity": "Slot C",
+    "guid": "s2",
+    "tags": [
+     "interactable"
+    ],
+    "scripts": [
+     "useItem"
+    ],
+    "fires": [
+     "holocube:inserted"
+    ],
+    "inClosure": true
+   },
+   {
+    "entity": "Lamp Button",
+    "guid": "lb",
+    "tags": [
+     "interactable"
+    ],
+    "scripts": [
+     "pushButton"
+    ],
+    "fires": [
+     "lamp:toggle"
+    ],
+    "inClosure": false
+   }
+  ],
+  "closureKeys": [
+   "quest:complete",
+   "holocube:inserted",
+   "quest:progress:3",
+   "item:cubeA",
+   "item:cubeB",
+   "item:cubeC"
+  ],
+  "closureOrder": [
+   "item:cubeA",
+   "item:cubeB",
+   "item:cubeC",
+   "holocube:inserted",
+   "quest:progress:3",
+   "quest:complete"
+  ],
+  "objectiveNames": [
+   "Cube A",
+   "Slot A",
+   "Cube B",
+   "Slot B",
+   "Cube C",
+   "Slot C"
+  ],
+  "objectiveGuids": [
+   "c0",
+   "s0",
+   "c1",
+   "s1",
+   "c2",
+   "s2"
+  ],
+  "entityCount": 12
+ }
+}

@@ -1,0 +1,217 @@
+{
+ "name": "trigger_heuristic",
+ "scan": {
+  "ok": true,
+  "scene": "Game",
+  "applicationId": "42",
+  "entities": [
+   {
+    "guid": "i",
+    "name": "In",
+    "path": "Root/In",
+    "enabled": true,
+    "tags": [],
+    "pos": [
+     0,
+     0,
+     0
+    ],
+    "scripts": [
+     {
+      "name": "input",
+      "enabled": true,
+      "attrs": {}
+     }
+    ]
+   },
+   {
+    "guid": "q",
+    "name": "Q",
+    "path": "Root/Q",
+    "enabled": true,
+    "tags": [],
+    "pos": [
+     0,
+     0,
+     0
+    ],
+    "scripts": [
+     {
+      "name": "quest",
+      "enabled": true,
+      "attrs": {}
+     }
+    ]
+   }
+  ],
+  "scripts": {
+   "input": {
+    "n": 1,
+    "names": [
+     "_h0",
+     "_h1",
+     "_h2",
+     "_h3",
+     "_h4",
+     "_h5",
+     "_h6",
+     "initialize"
+    ],
+    "m": {
+     "initialize": {
+      "o": [
+       [
+        "menu:play",
+        "_h0",
+        "a"
+       ],
+       [
+        "menu:playAgain",
+        "_h1",
+        "a"
+       ],
+       [
+        "player:fire",
+        "_h2",
+        "a"
+       ],
+       [
+        "player:fireTimeout",
+        "_h3",
+        "a"
+       ],
+       [
+        "ui:restart",
+        "_h4",
+        "a"
+       ],
+       [
+        "stream:ended",
+        "_h5",
+        "a"
+       ],
+       [
+        "shot:fire",
+        "_h6",
+        "a"
+       ]
+      ]
+     },
+     "_h0": {},
+     "_h1": {},
+     "_h2": {},
+     "_h3": {},
+     "_h4": {},
+     "_h5": {},
+     "_h6": {}
+    }
+   },
+   "quest": {
+    "n": 1,
+    "names": [
+     "_onFire",
+     "initialize"
+    ],
+    "m": {
+     "initialize": {
+      "o": [
+       [
+        "shot:fire",
+        "_onFire",
+        "a"
+       ]
+      ]
+     },
+     "_onFire": {
+      "f": [
+       "arise:questComplete"
+      ]
+     }
+    }
+   }
+  },
+  "listeners": {},
+  "truncated": {}
+ },
+ "knowledge": null,
+ "expected": {
+  "source": {
+   "available": true,
+   "found": true,
+   "scriptTypes": 2,
+   "listeners": 0,
+   "unattributed": 0,
+   "goal": "arise:questComplete",
+   "goals": [
+    {
+     "key": "arise:questComplete",
+     "strength": 3,
+     "learned": false
+    }
+   ],
+   "unreachedGoals": [],
+   "events": [
+    {
+     "key": "arise:questComplete",
+     "name": "arise:questComplete",
+     "scope": "app",
+     "entity": null,
+     "depth": 0,
+     "root": false
+    },
+    {
+     "key": "shot:fire",
+     "name": "shot:fire",
+     "scope": "app",
+     "entity": null,
+     "depth": 1,
+     "root": true
+    }
+   ],
+   "hops": [
+    {
+     "src": "shot:fire",
+     "dst": "arise:questComplete",
+     "how": "static",
+     "ambiguous": false,
+     "approximate": false,
+     "path": "quest._onFire",
+     "steps": [
+      {
+       "script": "quest",
+       "entity": "Q",
+       "method": "_onFire",
+       "inst": 1,
+       "how": "handler",
+       "approximate": false
+      }
+     ]
+    }
+   ],
+   "owners": [],
+   "guards": [],
+   "entries": [],
+   "preferred": "",
+   "triggerNotes": [
+    "trigger menu:play (start/play/select style, score 3)",
+    "trigger shot:fire (fire/shoot/click/press style, score 6; next player:fire (3))"
+   ],
+   "notes": []
+  },
+  "recipe": {
+   "version": 1,
+   "goal": "arise:questComplete",
+   "triggers": [
+    "menu:play",
+    "shot:fire"
+   ],
+   "entries": [],
+   "suppress": [
+    "leaderboard"
+   ],
+   "delay_ms": 0,
+   "notes": "arise:questComplete is fired by quest._onFire, reached from shot:fire via quest._onFire. Entries are in goal-upward order (closest to the goal first); no guard with a known writer was found, so no entry is preferred.",
+   "source": "guessed"
+  }
+ }
+}
