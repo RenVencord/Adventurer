@@ -10,6 +10,7 @@ A Vencord plugin to automate Discord Quests.
 - Notifications when new quests are available
 - Randomized open and close times
 - Companion app for spoofing game exes and tracking quests
+- Auto updater
 
 ## Functionality
 
@@ -40,19 +41,29 @@ A Vencord plugin to automate Discord Quests.
   - **Notify Video Quests** toggles whether to notify when a video quest is available
 
 ## Usage
-I will hopefully have a build in release soon, but for now:
+### Releases (recommended)
+1. [Download](https://github.com/RenVencord/Adventurer/releases) the latest release
+2. Specify a Vencord directory and click `1-Click Full Setup` if Vencord is not already built or `Sync & Build Vencord` if it is.
+3. Reload Discord and enable the plugin
+
+### From Source
 1. [Build Vencord](https://docs.vencord.dev/installing/)
 2. Clone this repository
     ```bash
     git clone https://github.com/RenVencord/Adventurer.git
     ```
 3. Copy the `adventurer` folder into `Vencord/src/userplugins`
-4. **Optional:** For the companion app, download [Python >=3.7](https://www.python.org/downloads/)
-5. Install requirements
+4. Build Vencord
+   ```bash
+   pnpm build
+   ```
+5. Reload Discord
+6. **Optional (highly recommended):** For the companion app, download [Python >=3.7](https://www.python.org/downloads/)
+7. Install requirements
     ```bash
    pip install -r requirements.txt
     ```
-6. Start the companion app
+8. Start the companion app
     ```bash
    python server.py
     ```
@@ -62,4 +73,8 @@ I will hopefully have a build in release soon, but for now:
 - Better log output management
 - Quest claim fanfare
 - Better quest page direct
-- Plugin installer and auto updater
+- Statistics
+- Custom quest home page
+- Start individual quests
+- See quest expiration date
+- Port changer
