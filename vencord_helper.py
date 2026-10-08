@@ -1,3 +1,4 @@
+import json
 import os
 import sys
 import shutil
@@ -25,24 +26,50 @@ def get_bundled_plugin_path() -> str:
     return local
 
 
+def is_valid_vencord_source_dir(path: str) -> bool:
+    """True only if path is an actual buildable Vencord source repository (not an AppData folder)."""
+    if not path or not os.path.isdir(path):
+        return False
+
+    norm = os.path.normpath(os.path.abspath(path)).lower()
+    # Explicitly reject Discord's installed AppData directories
+    if "\\appdata\\roaming\\vencord" in norm or "\\appdata\\local\\vencord" in norm:
+        return False
+    if "/.config/vencord" in norm or "/.var/app" in norm:
+        return False
+
+    # Check for Vencord repository source structure
+    has_build_script = os.path.isfile(os.path.join(path, "scripts", "build", "build.mjs"))
+    has_plugins_dir = os.path.isdir(os.path.join(path, "src", "plugins"))
+
+    pkg_json_path = os.path.join(path, "package.json")
+    has_build_pkg = False
+    if os.path.isfile(pkg_json_path):
+        try:
+            with open(pkg_json_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                has_build_pkg = "build" in data.get("scripts", {})
+        except Exception:
+            pass
+
+    return (has_build_script or has_plugins_dir) and has_build_pkg
+
+
 def find_vencord_dir(custom_path: str = None) -> str | None:
-    if custom_path and os.path.exists(custom_path):
-        target = os.path.join(custom_path, "src", "userplugins")
-        if os.path.exists(target) or os.path.exists(os.path.join(custom_path, "package.json")):
-            return os.path.abspath(custom_path)
+    if custom_path and is_valid_vencord_source_dir(custom_path):
+        return os.path.abspath(custom_path)
 
     candidates = [
         os.path.join(os.path.expanduser("~"), "Vencord"),
         "C:\\Vencord",
-        os.path.join(os.path.expanduser("~"), "AppData", "Roaming", "Vencord"),
-        os.path.join(os.path.expanduser("~"), "AppData", "Local", "Vencord")
+        os.path.join(os.path.expanduser("~"), "Documents", "Vencord"),
+        os.path.join(os.path.expanduser("~"), "src", "Vencord"),
+        os.path.join(os.path.expanduser("~"), "Projects", "Vencord"),
     ]
 
     for cand in candidates:
-        if os.path.exists(cand):
-            target = os.path.join(cand, "src", "userplugins")
-            if os.path.exists(target) or os.path.exists(os.path.join(cand, "package.json")):
-                return os.path.abspath(cand)
+        if is_valid_vencord_source_dir(cand):
+            return os.path.abspath(cand)
 
     return None
 
@@ -133,23 +160,60 @@ def _refresh_path() -> None:
             except Exception:
                 pass
 
+            pnpm_home = os.environ.get("PNPM_HOME", "")
             well_known = [
                 r"C:\Program Files\nodejs",
                 r"C:\Program Files (x86)\nodejs",
+                os.path.expandvars(r"%ProgramFiles%\nodejs"),
+                os.path.expandvars(r"%ProgramW6432%\nodejs"),
+                os.path.expandvars(r"%LOCALAPPDATA%\Programs\nodejs"),
+                os.path.expandvars(r"%LOCALAPPDATA%\Programs\node"),
                 os.path.expandvars(r"%APPDATA%\npm"),
+                os.path.expandvars(r"%LOCALAPPDATA%\pnpm"),
+                os.path.expandvars(r"%APPDATA%\pnpm"),
+                os.path.expandvars(r"%USERPROFILE%\AppData\Local\pnpm"),
+                os.path.expandvars(r"%USERPROFILE%\AppData\Roaming\pnpm"),
+                pnpm_home,
+                os.path.expandvars(r"%APPDATA%\nvm"),
+                os.path.expandvars(r"%NVM_HOME%"),
+                os.path.expandvars(r"%NVM_SYMLINK%"),
+                os.path.expandvars(r"%USERPROFILE%\.volta\bin"),
+                os.path.expandvars(r"%USERPROFILE%\.fnm\current"),
                 os.path.expandvars(r"%LOCALAPPDATA%\Programs\Git\cmd"),
                 r"C:\Program Files\Git\cmd",
                 r"C:\Program Files\Git\bin",
             ]
             for d in well_known:
-                if os.path.isdir(d) and d not in paths:
+                if d and os.path.isdir(d) and d not in paths:
                     paths.append(d)
 
-            current = os.environ.get("PATH", "").split(";")
+            current = [p.strip().strip('"') for p in os.environ.get("PATH", "").split(";") if p.strip()]
             for p in paths:
                 p_clean = p.strip().strip('"')
                 if p_clean and os.path.isdir(p_clean) and p_clean not in current:
                     current.append(p_clean)
+
+            # Prioritize directories that actually contain node.exe, git.exe, or pnpm.exe
+            priority = []
+            for candidate in [
+                r"C:\Program Files\nodejs",
+                r"C:\Program Files (x86)\nodejs",
+                os.path.expandvars(r"%LOCALAPPDATA%\pnpm"),
+                pnpm_home,
+                os.path.expandvars(r"%LOCALAPPDATA%\Programs\Git\cmd"),
+                r"C:\Program Files\Git\cmd",
+            ]:
+                if candidate and os.path.isdir(candidate):
+                    for exe_name in ("node.exe", "pnpm.exe", "git.exe"):
+                        if os.path.isfile(os.path.join(candidate, exe_name)):
+                            if candidate not in priority:
+                                priority.append(candidate)
+                            break
+
+            for pdir in reversed(priority):
+                if pdir in current:
+                    current.remove(pdir)
+                current.insert(0, pdir)
 
             os.environ["PATH"] = ";".join(current)
         except Exception:
@@ -178,76 +242,127 @@ def _detect_linux_pm() -> tuple[str, list[str], list[str]]:
     return "", [], []
 
 
-def _install_prerequisites_windows(need_git: bool, need_node: bool, log_callback=None) -> tuple[bool, str]:
-    """Automate installation of Git and Node.js via winget on Windows."""
+def _install_prerequisites_windows(need_git: bool, need_node: bool, need_pm: bool = False, log_callback=None) -> tuple[bool, str]:
+    """Automate installation of Git and Node.js via winget/pnpm on Windows."""
     def _log(msg: str):
         if log_callback:
             log_callback(msg)
 
-    winget = shutil.which("winget")
-    if not winget:
-        missing = []
-        if need_git:
-            missing.append("Git (https://git-scm.com)")
-        if need_node:
-            missing.append("Node.js (https://nodejs.org)")
-        return False, f"Missing prerequisites: {', '.join(missing)}.\n\nWinget was not found. Please install them manually."
+    _refresh_path()
+    if need_git and shutil.which("git"):
+        need_git = False
+    if need_node and shutil.which("node"):
+        need_node = False
+    if need_pm and _get_pm_command():
+        need_pm = False
 
-    winget_flags = ["-e", "--accept-source-agreements", "--accept-package-agreements", "--disable-interactivity"]
+    if not need_git and not need_node and not need_pm:
+        return True, "All prerequisites are installed."
+
+    winget = shutil.which("winget")
+    winget_flags = [
+        "-e",
+        "--silent",
+        "--accept-source-agreements",
+        "--accept-package-agreements",
+        "--disable-interactivity",
+    ]
 
     if need_git:
+        if not winget:
+            return False, "Git is missing and winget was not found. Please install Git manually from https://git-scm.com."
         _log("Git was not found. Installing Git via winget...")
         try:
             res = subprocess.run(
                 ["winget", "install", "--id", "Git.Git"] + winget_flags,
-                capture_output=True, text=True, shell=True
+                capture_output=True, text=True, shell=True, env=os.environ.copy()
             )
             _refresh_path()
             if not shutil.which("git"):
                 _log(f"Winget Git output: {res.stdout or res.stderr}")
                 return False, f"Failed to install Git automatically. Exit code: {res.returncode}. Please install Git manually from https://git-scm.com."
             _log("Git installed successfully.")
+            need_git = False
         except Exception as e:
             return False, f"Failed to run winget to install Git: {e}"
 
     if need_node:
-        _log("Node.js was not found. Installing Node.js LTS via winget...")
-        try:
-            res = subprocess.run(
-                ["winget", "install", "--id", "OpenJS.NodeJS.LTS"] + winget_flags,
-                capture_output=True, text=True, shell=True
-            )
-            _refresh_path()
-            if not shutil.which("node") and not shutil.which("npm"):
+        # If standalone pnpm is already present, try pnpm's built-in node version manager first (fast, no admin needed)
+        pnpm_bin = shutil.which("pnpm")
+        if pnpm_bin:
+            _log("Standalone pnpm detected without Node.js runtime. Installing Node.js LTS via pnpm...")
+            try:
                 res = subprocess.run(
-                    ["winget", "install", "--id", "OpenJS.NodeJS"] + winget_flags,
-                    capture_output=True, text=True, shell=True
+                    [pnpm_bin, "env", "use", "--global", "lts"],
+                    capture_output=True, text=True, shell=True, env=os.environ.copy()
                 )
                 _refresh_path()
+                if shutil.which("node"):
+                    _log("Node.js LTS installed and activated via pnpm.")
+                    need_node = False
+                else:
+                    _log("pnpm env completed, but 'node' was not recognized. Falling back to winget...")
+            except Exception as e:
+                _log(f"pnpm env failed ({e}). Falling back to winget...")
 
-            if not shutil.which("node") and not shutil.which("npm"):
-                _log(f"Winget Node.js output: {res.stdout or res.stderr}")
-                return False, f"Failed to install Node.js automatically. Exit code: {res.returncode}. Please install Node.js manually from https://nodejs.org."
-            _log("Node.js installed successfully.")
-        except Exception as e:
-            return False, f"Failed to run winget to install Node.js: {e}"
+        # If node is still missing, install Node.js LTS via winget
+        if shutil.which("node") is None:
+            if not winget:
+                return False, "Node.js is missing and winget was not found. Please install Node.js manually from https://nodejs.org."
+            _log("Node.js was not found. Installing Node.js LTS via winget...")
+            try:
+                res = subprocess.run(
+                    ["winget", "install", "--id", "OpenJS.NodeJS.LTS"] + winget_flags,
+                    capture_output=True, text=True, shell=True, env=os.environ.copy()
+                )
+                _refresh_path()
+                if not shutil.which("node"):
+                    _log("Trying winget OpenJS.NodeJS...")
+                    res = subprocess.run(
+                        ["winget", "install", "--id", "OpenJS.NodeJS"] + winget_flags,
+                        capture_output=True, text=True, shell=True, env=os.environ.copy()
+                    )
+                    _refresh_path()
 
-    # Optionally install pnpm via npm for better Vencord compatibility and build speed
+                if not shutil.which("node"):
+                    _log(f"Winget Node.js output: {res.stdout or res.stderr}")
+                    return False, f"Failed to install Node.js automatically. Exit code: {res.returncode}. Please install Node.js manually from https://nodejs.org."
+                _log("Node.js installed successfully.")
+                need_node = False
+            except Exception as e:
+                return False, f"Failed to run winget to install Node.js: {e}"
+
+    # Prefer pnpm over npm for speed and reliable lockfile builds
     _refresh_path()
-    if not shutil.which("pnpm") and shutil.which("npm"):
-        _log("Installing pnpm via npm for faster Vencord builds...")
-        try:
-            subprocess.run(["npm", "install", "-g", "pnpm"], capture_output=True, text=True, shell=True)
-            _refresh_path()
-            if shutil.which("pnpm"):
-                _log("pnpm installed successfully.")
-        except Exception:
-            _log("Could not install pnpm globally; will fall back to npm.")
+    if not shutil.which("pnpm"):
+        if shutil.which("npm"):
+            _log("Installing pnpm globally via npm for faster Vencord builds...")
+            try:
+                subprocess.run(["npm", "install", "-g", "pnpm"], capture_output=True, text=True, shell=True, env=os.environ.copy())
+                _refresh_path()
+                if shutil.which("pnpm"):
+                    _log("pnpm installed successfully.")
+            except Exception:
+                _log("Could not install pnpm globally; will fall back to npm.")
+        elif winget:
+            _log("Installing pnpm via winget...")
+            try:
+                subprocess.run(["winget", "install", "--id", "pnpm.pnpm"] + winget_flags, capture_output=True, text=True, shell=True, env=os.environ.copy())
+                _refresh_path()
+            except Exception:
+                pass
+
+    _refresh_path()
+    if not shutil.which("node"):
+        return False, "Node.js was not found after installation. Please restart Adventurer or install Node.js manually from https://nodejs.org."
+
+    if not _get_pm_command():
+        return False, "Neither pnpm nor npm was found after installation. Please install Node.js manually from https://nodejs.org."
 
     return True, "Prerequisites installed."
 
 
-def _install_prerequisites_linux(need_git: bool, need_node: bool, log_callback=None) -> tuple[bool, str]:
+def _install_prerequisites_linux(need_git: bool, need_node: bool, need_pm: bool = False, log_callback=None) -> tuple[bool, str]:
     """Check and assist with prerequisites on Linux (using PolicyKit pkexec if available)."""
     def _log(msg: str):
         if log_callback:
@@ -258,7 +373,9 @@ def _install_prerequisites_linux(need_git: bool, need_node: bool, log_callback=N
     if need_git:
         needed.append("git")
     if need_node:
-        needed.append("nodejs and npm")
+        needed.append("nodejs")
+    if need_pm:
+        needed.append("npm")
     needed_str = " and ".join(needed)
 
     if not pm_name:
@@ -276,10 +393,10 @@ def _install_prerequisites_linux(need_git: bool, need_node: bool, log_callback=N
         _log(f"{needed_str.capitalize()} missing. Requesting authorization to install via PolicyKit (pkexec)...")
         try:
             if update_cmd:
-                subprocess.run(["pkexec"] + update_cmd, capture_output=True, text=True)
-            res = subprocess.run(["pkexec"] + install_cmd, capture_output=True, text=True)
+                subprocess.run(["pkexec"] + update_cmd, capture_output=True, text=True, env=os.environ.copy())
+            res = subprocess.run(["pkexec"] + install_cmd, capture_output=True, text=True, env=os.environ.copy())
             _refresh_path()
-            if (not need_git or shutil.which("git")) and (not need_node or _get_pm_command()):
+            if (not need_git or shutil.which("git")) and (not need_node or shutil.which("node")) and (not need_pm or _get_pm_command()):
                 _log("Prerequisites installed successfully on Linux.")
                 return True, "Prerequisites installed."
             _log(f"pkexec install failed or was canceled. Exit code: {res.returncode}")
@@ -295,29 +412,32 @@ def _install_prerequisites_linux(need_git: bool, need_node: bool, log_callback=N
 
 
 def ensure_prerequisites(log_callback=None, check_git: bool = True) -> tuple[bool, str]:
-    """Ensure Git and Node.js/pnpm/npm are installed on the system."""
+    """Ensure Git, Node.js, and pnpm/npm are installed on the system."""
     _refresh_path()
     need_git = check_git and (shutil.which("git") is None)
+    need_node = (shutil.which("node") is None)
     has_pm = bool(_get_pm_command())
-    need_node = not has_pm
+    need_pm = not has_pm
 
-    if not need_git and not need_node:
+    if not need_git and not need_node and not need_pm:
         return True, "All prerequisites are installed."
 
     if sys.platform == "win32":
-        return _install_prerequisites_windows(need_git, need_node, log_callback)
+        return _install_prerequisites_windows(need_git, need_node, need_pm, log_callback)
     elif sys.platform.startswith("linux"):
-        return _install_prerequisites_linux(need_git, need_node, log_callback)
+        return _install_prerequisites_linux(need_git, need_node, need_pm, log_callback)
     elif sys.platform == "darwin":
         missing = []
         if need_git:
             missing.append("git")
         if need_node:
             missing.append("node")
+        if need_pm:
+            missing.append("pnpm")
         return False, (
             f"Missing prerequisites ({', '.join(missing)}). "
             f"Please install them via Homebrew in your terminal:\n\n"
-            f"    brew install {' '.join(missing)} pnpm"
+            f"    brew install {' '.join(missing)}"
         )
     else:
         return False, "Missing prerequisites (Git, Node.js). Please install them for your operating system."
@@ -358,7 +478,7 @@ class VencordBuildWorker(QThread):
         return True
 
     def run(self):
-        need_git = (self.mode == "setup" and not os.path.exists(self.vencord_dir))
+        need_git = (self.mode == "setup" and not is_valid_vencord_source_dir(self.vencord_dir))
         self.log_signal.emit("Checking build prerequisites...")
         ready, msg = ensure_prerequisites(log_callback=self.log_signal.emit, check_git=need_git)
         if not ready:
@@ -370,51 +490,118 @@ class VencordBuildWorker(QThread):
             self.finished_signal.emit(False, "Neither pnpm nor npm was found in PATH.")
             return
 
-        self.log_signal.emit(f"Using package manager: {pm}")
+        node_path = shutil.which("node")
+        if not node_path:
+            self.finished_signal.emit(False, "Node.js ('node') was not found in PATH.")
+            return
 
-        build_cmd = [pm, "build"] if pm == "pnpm" else [pm, "run", "build"]
-        inject_cmd = [pm, "inject"] if pm == "pnpm" else [pm, "run", "inject"]
+        self.log_signal.emit(f"Using package manager: {pm}")
+        self.log_signal.emit(f"Using Node.js runtime: {node_path}")
+
+        build_cmd = [pm, "run", "build"]
+        inject_cmd = [pm, "run", "inject"]
 
         if self.mode == "setup":
-            if not os.path.exists(self.vencord_dir):
-                self.log_signal.emit("Cloning Vencord repository from GitHub...")
-                if not shutil.which("git"):
-                    self.finished_signal.emit(False, "Git was not found in PATH.")
-                    return
-                try:
-                    res = subprocess.run(["git", "clone", VENCORD_REPO_URL, self.vencord_dir], capture_output=True, text=True)
-                    if res.returncode != 0:
-                        self.finished_signal.emit(False, f"Git clone failed: {res.stderr}")
+            norm = os.path.normpath(os.path.abspath(self.vencord_dir)).lower()
+            if "\\appdata\\roaming\\vencord" in norm or "\\appdata\\local\\vencord" in norm or not self.vencord_dir:
+                default_target = os.path.join(os.path.expanduser("~"), "Vencord")
+                self.log_signal.emit(
+                    f"Notice: '{self.vencord_dir}' is Vencord's AppData configuration folder, not source code. "
+                    f"Redirecting setup destination to '{default_target}'."
+                )
+                self.vencord_dir = default_target
+
+            if not is_valid_vencord_source_dir(self.vencord_dir):
+                if os.path.exists(self.vencord_dir) and os.listdir(self.vencord_dir):
+                    default_target = os.path.join(os.path.expanduser("~"), "Vencord")
+                    if os.path.abspath(self.vencord_dir) != os.path.abspath(default_target) and (not os.path.exists(default_target) or not os.listdir(default_target)):
+                        self.log_signal.emit(f"Changing target to clean folder '{default_target}'...")
+                        self.vencord_dir = default_target
+                    else:
+                        self.finished_signal.emit(
+                            False,
+                            f"The folder '{self.vencord_dir}' exists and is not empty, but is not a valid Vencord source repository.\n\n"
+                            "Please choose an empty folder or delete it to proceed with 1-Click Setup."
+                        )
                         return
-                except Exception as e:
-                    self.finished_signal.emit(False, f"Git clone exception: {e}")
-                    return
+
+                if not os.path.exists(self.vencord_dir) or not os.listdir(self.vencord_dir):
+                    self.log_signal.emit(f"Cloning Vencord repository into '{self.vencord_dir}'...")
+                    if not shutil.which("git"):
+                        self.finished_signal.emit(False, "Git was not found in PATH.")
+                        return
+                    try:
+                        res = subprocess.run(["git", "clone", VENCORD_REPO_URL, self.vencord_dir], capture_output=True, text=True, shell=True, env=os.environ.copy())
+                        if res.returncode != 0:
+                            self.finished_signal.emit(False, f"Git clone failed: {res.stderr or res.stdout}")
+                            return
+                    except Exception as e:
+                        self.finished_signal.emit(False, f"Git clone exception: {e}")
+                        return
 
             if not self._sync_plugin_files():
                 return
 
             self.log_signal.emit(f"Running '{pm} install'...")
             install_cmd = [pm, "install", "--frozen-lockfile"] if pm == "pnpm" else [pm, "install"]
-            res = subprocess.run(install_cmd, cwd=self.vencord_dir, capture_output=True, text=True, shell=True)
+            res = subprocess.run(install_cmd, cwd=self.vencord_dir, capture_output=True, text=True, shell=True, env=os.environ.copy())
             if res.returncode != 0:
                 self.log_signal.emit(f"Warning: Install completed with code {res.returncode}")
 
             self.log_signal.emit(f"Building Vencord ('{' '.join(build_cmd)}')...")
-            res = subprocess.run(build_cmd, cwd=self.vencord_dir, capture_output=True, text=True, shell=True)
+            res = subprocess.run(build_cmd, cwd=self.vencord_dir, capture_output=True, text=True, shell=True, env=os.environ.copy())
             if res.returncode != 0:
                 self.finished_signal.emit(False, f"Vencord build failed: {res.stderr or res.stdout}")
                 return
 
             self.log_signal.emit(f"Injecting Vencord into Discord ('{' '.join(inject_cmd)}')...")
-            res = subprocess.run(inject_cmd, cwd=self.vencord_dir, capture_output=True, text=True, shell=True)
+            res = subprocess.run(inject_cmd, cwd=self.vencord_dir, capture_output=True, text=True, shell=True, env=os.environ.copy())
+            if res.returncode != 0:
+                self.finished_signal.emit(False, f"Vencord inject failed: {res.stderr or res.stdout}")
+                return
+
             self.finished_signal.emit(True, "Vencord setup, build, and inject completed successfully!")
 
         elif self.mode == "build":
+            if not is_valid_vencord_source_dir(self.vencord_dir):
+                if "appdata" in self.vencord_dir.lower():
+                    self.finished_signal.emit(
+                        False,
+                        f"The selected folder '{self.vencord_dir}' is Vencord's AppData configuration folder, "
+                        "not the Vencord source code repository.\n\n"
+                        "Please click '1-Click Full Setup' to clone and build Vencord from source into ~/Vencord."
+                    )
+                    return
+                self.finished_signal.emit(
+                    False,
+                    f"The directory '{self.vencord_dir}' is not a valid Vencord source repository (missing build.mjs/package.json).\n\n"
+                    "Please click '1-Click Full Setup' to set up Vencord from source."
+                )
+                return
+
             if not self._sync_plugin_files():
                 return
 
+            # If node_modules is missing, run install first
+            if not os.path.isdir(os.path.join(self.vencord_dir, "node_modules")):
+                self.log_signal.emit(f"Dependencies not installed. Running '{pm} install'...")
+                install_cmd = [pm, "install", "--frozen-lockfile"] if pm == "pnpm" else [pm, "install"]
+                res = subprocess.run(install_cmd, cwd=self.vencord_dir, capture_output=True, text=True, shell=True, env=os.environ.copy())
+                if res.returncode != 0:
+                    self.log_signal.emit(f"Warning: Install completed with code {res.returncode}")
+
             self.log_signal.emit(f"Building Vencord ('{' '.join(build_cmd)}')...")
-            res = subprocess.run(build_cmd, cwd=self.vencord_dir, capture_output=True, text=True, shell=True)
+            res = subprocess.run(build_cmd, cwd=self.vencord_dir, capture_output=True, text=True, shell=True, env=os.environ.copy())
+            if res.returncode != 0:
+                # If build failed due to dependency sync issue or broken previous install, retry with clean install
+                combined = f"{res.stderr}\n{res.stdout}"
+                if any(k in combined.lower() for k in ("out of sync", "lifecycle", "failed to run", "cannot find module")):
+                    self.log_signal.emit(f"Build failed due to dependency sync issue. Running '{pm} install'...")
+                    install_cmd = [pm, "install"]
+                    subprocess.run(install_cmd, cwd=self.vencord_dir, capture_output=True, text=True, shell=True, env=os.environ.copy())
+                    self.log_signal.emit(f"Retrying Vencord build ('{' '.join(build_cmd)}')...")
+                    res = subprocess.run(build_cmd, cwd=self.vencord_dir, capture_output=True, text=True, shell=True, env=os.environ.copy())
+
             if res.returncode != 0:
                 self.finished_signal.emit(False, f"Vencord build failed: {res.stderr or res.stdout}")
                 return

@@ -4,6 +4,7 @@ import time
 import urllib.request
 import traceback
 import json
+import subprocess
 from datetime import datetime
 
 from PyQt6.QtWidgets import (
@@ -149,6 +150,65 @@ def _load_logo_png(size: int = 72) -> QPixmap | None:
         return pm
     except Exception:
         return None
+
+
+def _format_build_date(dt: datetime) -> str:
+    """Format datetime without leading zeros on day and hour (e.g. October 8, 2026 2:03 PM)."""
+    hour_12 = dt.hour % 12 or 12
+    return f"{dt.strftime('%B')} {dt.day}, {dt.year} {hour_12}:{dt.strftime('%M %p')}"
+
+
+def get_build_date() -> str:
+    """Return the application build date, automatically determined."""
+    candidate_paths = [
+        _get_asset_path("build_info.json"),
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "build_info.json"),
+    ]
+    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+        candidate_paths.insert(0, os.path.join(sys._MEIPASS, "build_info.json"))
+
+    for path in candidate_paths:
+        if os.path.exists(path):
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    bdate = data.get("build_date")
+                    if bdate:
+                        return bdate
+            except Exception:
+                pass
+
+    if getattr(sys, "frozen", False) and sys.executable:
+        try:
+            mtime = os.path.getmtime(sys.executable)
+            return _format_build_date(datetime.fromtimestamp(mtime))
+        except Exception:
+            pass
+
+    try:
+        repo_dir = os.path.dirname(os.path.abspath(__file__))
+        res = subprocess.run(
+            ["git", "log", "-1", "--format=%ct"],
+            cwd=repo_dir,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=2,
+        )
+        if res.returncode == 0 and res.stdout.strip().isdigit():
+            return _format_build_date(datetime.fromtimestamp(int(res.stdout.strip())))
+    except Exception:
+        pass
+
+    try:
+        manifest = os.path.join(os.path.dirname(os.path.abspath(__file__)), "version_manifest.json")
+        target = manifest if os.path.exists(manifest) else __file__
+        mtime = os.path.getmtime(target)
+        return _format_build_date(datetime.fromtimestamp(mtime))
+    except Exception:
+        pass
+
+    return _format_build_date(datetime.now())
 
 
 def init_orb_icon_base64():
@@ -1200,7 +1260,11 @@ class VencordManagerDialog(QDialog):
         form = QFormLayout()
         vencord_box = QHBoxLayout()
         self.txt_vencord_dir = QLineEdit()
-        saved_v_dir = prefs.get("vencord_source_dir", "") or vencord_helper.find_vencord_dir() or ""
+        saved_v_dir = prefs.get("vencord_source_dir", "").strip()
+        if saved_v_dir and not vencord_helper.is_valid_vencord_source_dir(saved_v_dir):
+            saved_v_dir = ""
+        if not saved_v_dir:
+            saved_v_dir = vencord_helper.find_vencord_dir() or os.path.join(os.path.expanduser("~"), "Vencord")
         self.txt_vencord_dir.setText(saved_v_dir)
 
         btn_browse_v = QPushButton()
@@ -1257,13 +1321,19 @@ class VencordManagerDialog(QDialog):
 
     def _on_build_vencord(self):
         target_dir = self.txt_vencord_dir.text().strip()
-        if not target_dir:
-            target_dir = vencord_helper.find_vencord_dir()
-            if target_dir:
+        if not target_dir or not vencord_helper.is_valid_vencord_source_dir(target_dir):
+            found = vencord_helper.find_vencord_dir()
+            if found:
+                target_dir = found
                 self.txt_vencord_dir.setText(target_dir)
 
-        if not target_dir:
-            QMessageBox.warning(self, "Vencord Directory Required", "Please specify the directory where Vencord is built from source.")
+        if not target_dir or not vencord_helper.is_valid_vencord_source_dir(target_dir):
+            QMessageBox.warning(
+                self,
+                "Vencord Source Directory Required",
+                "Please specify or select a valid Vencord source directory containing build scripts.\n\n"
+                "Tip: Click '1-Click Full Setup' to automatically clone and configure Vencord into ~/Vencord."
+            )
             return
 
         self._show_console()
@@ -1274,11 +1344,14 @@ class VencordManagerDialog(QDialog):
         self._start_build_worker(target_dir, "build")
 
     def _on_setup_vencord(self):
-        target_dir = self.txt_vencord_dir.text().strip() or os.path.join(os.path.expanduser("~"), "Vencord")
-        self.txt_vencord_dir.setText(target_dir)
+        target_dir = self.txt_vencord_dir.text().strip()
+        if not target_dir or not vencord_helper.is_valid_vencord_source_dir(target_dir):
+            if not target_dir or "appdata" in target_dir.lower():
+                target_dir = os.path.join(os.path.expanduser("~"), "Vencord")
+                self.txt_vencord_dir.setText(target_dir)
 
         self._show_console()
-        self.vencord_log.appendPlainText("Starting 1-Click Full Vencord Setup...")
+        self.vencord_log.appendPlainText(f"Starting 1-Click Full Vencord Setup in '{target_dir}'...")
         self.btn_setup_vencord.setEnabled(False)
         self.btn_build_vencord.setEnabled(False)
 
@@ -1459,6 +1532,187 @@ class AppUpdateDialog(QDialog):
     def _on_skip(self):
         self.skip_requested = True
         self.reject()
+
+
+class AboutDialog(QDialog):
+    def __init__(self, prefs: dict, parent=None):
+        super().__init__(parent)
+        self._prefs = prefs
+        self.setWindowTitle("About Adventurer")
+        self.setFixedWidth(500)
+        self.setStyleSheet(f"""
+            QDialog {{
+                background: {BG_DARK.name()};
+                color: {TEXT_PRIMARY.name()};
+            }}
+            QLabel {{
+                color: {TEXT_PRIMARY.name()};
+            }}
+        """)
+
+        self._version = updater.APP_VERSION
+        self._build_date = get_build_date()
+        self._settings_path = os.path.abspath(PREFS_FILE)
+
+        vencord_dir = prefs.get("vencord_source_dir", "").strip() or vencord_helper.find_vencord_dir()
+        if vencord_dir and os.path.exists(vencord_dir):
+            self._vencord_path = os.path.abspath(vencord_dir)
+        elif vencord_dir:
+            self._vencord_path = vencord_dir
+        else:
+            self._vencord_path = "Not configured"
+
+        self._setup_ui()
+
+    def _setup_ui(self):
+        root_layout = QVBoxLayout(self)
+        root_layout.setContentsMargins(20, 20, 20, 16)
+        root_layout.setSpacing(16)
+
+        content_row = QHBoxLayout()
+        content_row.setSpacing(16)
+        content_row.setAlignment(Qt.AlignmentFlag.AlignTop)
+
+        # Adventurer Logo on the left
+        logo_pm = _load_logo_png(72)
+        if logo_pm is None or logo_pm.isNull():
+            svg_pm = _load_quest_svg(72)
+            if svg_pm:
+                logo_pm = svg_pm
+
+        logo_lbl = QLabel()
+        if logo_pm and not logo_pm.isNull():
+            logo_scaled = logo_pm.scaled(
+                72, 72,
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation
+            )
+            logo_lbl.setPixmap(logo_scaled)
+        logo_lbl.setFixedSize(72, 72)
+        content_row.addWidget(logo_lbl, 0, Qt.AlignmentFlag.AlignTop)
+
+        # Right side: text information
+        text_col = QVBoxLayout()
+        text_col.setSpacing(6)
+
+        # 1. Adventurer followed by the version number
+        title_lbl = QLabel(f"Adventurer {self._version}")
+        title_lbl.setStyleSheet(f"font-size: 16px; font-weight: bold; color: {TEXT_PRIMARY.name()};")
+        text_col.addWidget(title_lbl)
+
+        # 2. Build date
+        build_lbl = QLabel()
+        build_lbl.setTextFormat(Qt.TextFormat.RichText)
+        build_lbl.setText(
+            f"<span style='color: {TEXT_MUTED.name()}; font-size: 12px;'>Build date:</span> "
+            f"<span style='color: {TEXT_PRIMARY.name()}; font-size: 12px;'>{self._build_date}</span>"
+        )
+        text_col.addWidget(build_lbl)
+
+        def wrap_chars(text: str) -> str:
+            if not text:
+                return ""
+            parts = []
+            for ch in text:
+                if ch == '&':
+                    parts.append('&amp;')
+                elif ch == '<':
+                    parts.append('&lt;')
+                elif ch == '>':
+                    parts.append('&gt;')
+                elif ch == '"':
+                    parts.append('&quot;')
+                else:
+                    parts.append(ch)
+            return "\u200b".join(parts)
+
+        # 3. Adventurer settings path (wrap text by character)
+        settings_lbl = QLabel()
+        settings_lbl.setWordWrap(True)
+        settings_lbl.setTextFormat(Qt.TextFormat.RichText)
+        settings_lbl.setText(
+            f"<span style='color: {TEXT_MUTED.name()}; font-size: 11px; font-weight: 600;'>Settings path:</span> "
+            f"<span style='color: {TEXT_PRIMARY.name()}; font-size: 11px;'>{wrap_chars(self._settings_path)}</span>"
+        )
+        text_col.addWidget(settings_lbl)
+
+        # 4. Vencord path (wrap text by character)
+        vencord_lbl = QLabel()
+        vencord_lbl.setWordWrap(True)
+        vencord_lbl.setTextFormat(Qt.TextFormat.RichText)
+        vencord_color = TEXT_PRIMARY.name() if self._vencord_path != "Not configured" else TEXT_MUTED.name()
+        vencord_lbl.setText(
+            f"<span style='color: {TEXT_MUTED.name()}; font-size: 11px; font-weight: 600;'>Vencord path:</span> "
+            f"<span style='color: {vencord_color}; font-size: 11px;'>{wrap_chars(self._vencord_path)}</span>"
+        )
+        text_col.addWidget(vencord_lbl)
+
+        # 5. Copyright RenVencord
+        copyright_lbl = QLabel("© RenVencord")
+        copyright_lbl.setStyleSheet(f"color: {TEXT_MUTED.name()}; font-size: 11px;")
+        text_col.addWidget(copyright_lbl)
+
+        content_row.addLayout(text_col, 1)
+        root_layout.addLayout(content_row)
+
+        # Bottom buttons: Copy and Close
+        btn_layout = QHBoxLayout()
+        btn_layout.setSpacing(8)
+        btn_layout.addStretch()
+
+        self.btn_copy = QPushButton("Copy")
+        self.btn_copy.setStyleSheet(f"""
+            QPushButton {{
+                background: {BG_MID.name()};
+                color: {TEXT_PRIMARY.name()};
+                border: 1px solid {BORDER.name()};
+                border-radius: 4px;
+                padding: 6px 16px;
+                font-weight: 600;
+                font-size: 12px;
+            }}
+            QPushButton:hover {{
+                background: {BG_CARD.name()};
+                border-color: {ACCENT_BLUE.name()};
+            }}
+        """)
+        self.btn_copy.clicked.connect(self._on_copy)
+        btn_layout.addWidget(self.btn_copy)
+
+        btn_close = QPushButton("Close")
+        btn_close.setDefault(True)
+        btn_close.setStyleSheet(f"""
+            QPushButton {{
+                background: {ACCENT_BLUE.name()};
+                color: white;
+                border: none;
+                border-radius: 4px;
+                padding: 6px 18px;
+                font-weight: 700;
+                font-size: 12px;
+            }}
+            QPushButton:hover {{
+                background: #4752c4;
+            }}
+        """)
+        btn_close.clicked.connect(self.accept)
+        btn_layout.addWidget(btn_close)
+
+        root_layout.addLayout(btn_layout)
+
+    def _on_copy(self):
+        info = (
+            f"Adventurer {self._version}\n"
+            f"Build date: {self._build_date}\n"
+            f"Settings path: {self._settings_path}\n"
+            f"Vencord path: {self._vencord_path}\n"
+            f"© RenVencord"
+        )
+        clipboard = QApplication.clipboard()
+        if clipboard:
+            clipboard.setText(info)
+        self.btn_copy.setText("Copied!")
+        QTimer.singleShot(1500, lambda: self.btn_copy.setText("Copy"))
 
 
 class UpdateCheckerThread(QThread):
@@ -1938,6 +2192,10 @@ class MainWindow(QMainWindow):
         menubar.setCornerWidget(self._user_btn, Qt.Corner.TopLeftCorner)
 
         file_menu = menubar.addMenu("File")
+        about_action = QAction("About", self)
+        about_action.triggered.connect(self._open_about)
+        file_menu.addAction(about_action)
+        file_menu.addSeparator()
         quit_action = QAction("Quit", self)
         quit_action.triggered.connect(self._quit_app)
         file_menu.addAction(quit_action)
@@ -2249,6 +2507,10 @@ class MainWindow(QMainWindow):
                 f"{name}{orb_str}\n(New {kind})",
                 quest
             )
+
+    def _open_about(self):
+        dlg = AboutDialog(self._prefs, self)
+        dlg.exec()
 
     def _open_settings(self):
         dlg = SettingsDialog(self._prefs, self)
