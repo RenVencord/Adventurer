@@ -5,7 +5,7 @@ import urllib.request
 import traceback
 import json
 import subprocess
-from datetime import datetime
+from datetime import datetime, timezone
 
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
@@ -410,17 +410,58 @@ def is_expired(quest: dict) -> bool:
     if not quest or not isinstance(quest, dict):
         return False
     cfg = quest.get("config") or {}
-    expires_at = cfg.get("expiresAt")
+    expires_at = cfg.get("expiresAt") or cfg.get("expires_at")
     if not expires_at:
         return False
     try:
-        from datetime import timezone
-        expiry = datetime.fromisoformat(expires_at)
+        clean_exp = str(expires_at).strip()
+        if clean_exp.endswith("Z"):
+            clean_exp = clean_exp[:-1] + "+00:00"
+        expiry = datetime.fromisoformat(clean_exp)
         if expiry.tzinfo is None:
             expiry = expiry.replace(tzinfo=timezone.utc)
         return datetime.now(timezone.utc) > expiry
-    except ValueError:
+    except Exception:
         return False
+
+
+def format_quest_expiry(quest: dict) -> str:
+    if not quest or not isinstance(quest, dict):
+        return ""
+    cfg = quest.get("config") or {}
+    expires_at = cfg.get("expiresAt") or cfg.get("expires_at")
+    if not expires_at:
+        return ""
+    try:
+        clean_exp = str(expires_at).strip()
+        if clean_exp.endswith("Z"):
+            clean_exp = clean_exp[:-1] + "+00:00"
+        expiry = datetime.fromisoformat(clean_exp)
+        if expiry.tzinfo is None:
+            expiry = expiry.replace(tzinfo=timezone.utc)
+
+        now = datetime.now(timezone.utc)
+        diff = expiry - now
+        total_seconds = diff.total_seconds()
+
+        if total_seconds <= 0:
+            return "Expired"
+
+        if total_seconds <= 86400:
+            if total_seconds < 60:
+                return "in < 1 minute"
+            elif total_seconds < 3600:
+                mins = int(total_seconds // 60)
+                return f"in {mins} minute" if mins == 1 else f"in {mins} minutes"
+            else:
+                hours = int(total_seconds // 3600)
+                return f"in {hours} hour" if hours == 1 else f"in {hours} hours"
+
+        local_dt = expiry.astimezone()
+        months = ["", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+        return f"{months[local_dt.month]} {local_dt.day:02d} {local_dt.year}"
+    except Exception:
+        return ""
 
 
 class ImageLoader(QThread):
@@ -526,9 +567,10 @@ class HeroBanner(QWidget):
 
 
 class QuestCard(QFrame):
-    def __init__(self, quest: dict, tag: str = "", tag_color: str = "", parent=None):
+    def __init__(self, quest: dict, tag: str = "", tag_color: str = "", show_expiry: bool = False, parent=None):
         super().__init__(parent)
         self.quest = quest
+        self._show_expiry = show_expiry
         self._loader: ImageLoader | None = None
 
         self.setFixedHeight(90)
@@ -580,6 +622,23 @@ class QuestCard(QFrame):
 
         layout.addLayout(info)
         layout.addStretch()
+
+        right_col = QVBoxLayout()
+        right_col.setContentsMargins(0, 0, 0, 0)
+        right_col.setSpacing(0)
+        right_col.addStretch()
+
+        self.expiry_lbl = QLabel()
+        self.expiry_lbl.setStyleSheet(
+            f"color: {TEXT_MUTED.name()}; font-size: 11px; font-weight: 500; "
+            "background: transparent; border: none;"
+        )
+        self.expiry_lbl.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignBottom)
+        right_col.addWidget(self.expiry_lbl, alignment=Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignBottom)
+
+        layout.addLayout(right_col)
+
+        self.update_expiry()
         self._load_icon()
 
     def update_tag(self, text: str, color: str = None):
@@ -589,6 +648,32 @@ class QuestCard(QFrame):
                 f"color: {color}; font-size: 11px; font-weight: 600; "
                 "background: transparent; border: none;"
             )
+
+    def update_expiry(self):
+        if not self._show_expiry:
+            self.expiry_lbl.hide()
+            return
+        text = format_quest_expiry(self.quest)
+        if self.expiry_lbl.text() != text:
+            self.expiry_lbl.setText(text)
+        if text:
+            self.expiry_lbl.show()
+            cfg = self.quest.get("config") or {}
+            exp_str = cfg.get("expiresAt") or cfg.get("expires_at")
+            if exp_str:
+                try:
+                    clean_exp = str(exp_str).strip()
+                    if clean_exp.endswith("Z"):
+                        clean_exp = clean_exp[:-1] + "+00:00"
+                    exp_dt = datetime.fromisoformat(clean_exp)
+                    if exp_dt.tzinfo is None:
+                        exp_dt = exp_dt.replace(tzinfo=timezone.utc)
+                    local_dt = exp_dt.astimezone()
+                    self.expiry_lbl.setToolTip(f"Expires: {local_dt.strftime('%b %d, %Y %I:%M %p')}")
+                except Exception:
+                    self.expiry_lbl.setToolTip(f"Expires: {text}")
+        else:
+            self.expiry_lbl.hide()
 
     def _load_icon(self):
         url = quest_icon_url(self.quest)
@@ -2590,15 +2675,27 @@ class MainWindow(QMainWindow):
                 self._last_skipped_ids = skipped_ids
                 self._rebuild_tabs(quests, active_id, active_status_type, active_ends_at)
 
+            quests_by_id = {str(q.get("id")): q for q in quests if q and isinstance(q, dict) and q.get("id")}
             for card in self._queue_page.cards():
                 if not card or not card.quest:
                     continue
-                qid = card.quest.get("id")
+                qid = str(card.quest.get("id"))
+                if qid in quests_by_id:
+                    card.quest = quests_by_id[qid]
                 if qid == active_id and active_status_type in ["waiting", "stopping", "cleanup", "running"]:
                     _, prog_label = quest_progress(card.quest, active_status_type, active_ends_at)
                     card.update_tag(prog_label if prog_label else "Running")
                 else:
                     card.update_tag("Queued")
+                card.update_expiry()
+
+            for card in self._available_page.cards():
+                if not card or not card.quest:
+                    continue
+                qid = str(card.quest.get("id"))
+                if qid in quests_by_id:
+                    card.quest = quests_by_id[qid]
+                card.update_expiry()
 
         except Exception as e:
             print("Error suppressed during GUI refresh tick:")
@@ -2662,7 +2759,7 @@ class MainWindow(QMainWindow):
                     active_ends_at if is_target_active else 0
                 )
                 tag = prog_label if prog_label else "Queued"
-                self._queue_page.add_card(QuestCard(q, tag=tag, tag_color=TEXT_MUTED.name()))
+                self._queue_page.add_card(QuestCard(q, tag=tag, tag_color=TEXT_MUTED.name(), show_expiry=True))
         else:
             self._queue_page.add_empty("No queued quests")
 
@@ -2672,7 +2769,7 @@ class MainWindow(QMainWindow):
         if available_quests:
             for q in available_quests:
                 kind = "Not accepted"
-                self._available_page.add_card(QuestCard(q, tag=kind, tag_color=TEXT_MUTED.name()))
+                self._available_page.add_card(QuestCard(q, tag=kind, tag_color=TEXT_MUTED.name(), show_expiry=True))
         else:
             self._available_page.add_empty("No available quests")
 
@@ -2695,7 +2792,7 @@ class MainWindow(QMainWindow):
                     tag, color = "Expired", TEXT_MUTED.name()
                 else:
                     tag, color = "✓ Complete", ACCENT_GREEN.name()
-                self._history_page.add_card(QuestCard(q, tag=tag, tag_color=color))
+                self._history_page.add_card(QuestCard(q, tag=tag, tag_color=color, show_expiry=False))
         else:
             self._history_page.add_empty("No history quests yet")
 
