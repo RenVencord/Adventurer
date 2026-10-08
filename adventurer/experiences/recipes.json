@@ -1,0 +1,47 @@
+[
+    {
+        "application_id": "1536318183873454090",
+        "scene": "GlobalAces_MASTER",
+        "name": "VALORANT Aces",
+        "completion": {
+            "version": 1,
+            "goal": "arise:questComplete",
+            "triggers": ["select:play", "shot:fire"],
+            "entries": [
+                { "name": "run:complete", "scope": "app", "args": [{ "total": 0 }], "source": "inferred" }
+            ],
+            "suppress": ["leaderboard"],
+            "delay_ms": 0,
+            "notes": "run:complete makes runHistory record the ace as completed, which makes the rewards script fire arise:questComplete and report the quest. runHistory also submits every record to the leaderboard (leaderboard:submit), which is dropped.",
+            "source": "bundled"
+        }
+    },
+    {
+        "application_id": "1524717463034527784",
+        "scene": "MAIN",
+        "name": "King of the Hill",
+        "completion": {
+            "version": 1,
+            "goal": "quest:completed",
+            "triggers": ["arcade:button:start", "endlessRunner:game:hit"],
+            "entries": [
+                {
+                    "name": "endlessRunner:game:itemsCollected",
+                    "scope": "app",
+                    "args": [],
+                    "source": "inferred"
+                },
+                {
+                    "name": "endlessRunner:game:addScore",
+                    "scope": "app",
+                    "args": [{ "points": 0 }],
+                    "source": "inferred"
+                }
+            ],
+            "suppress": ["leaderboard"],
+            "delay_ms": 0,
+            "notes": "quest:completed is fired by discordQuestManager.onCansCollected, reached from endlessRunner:game:itemsCollected via discordQuestManager.onCansCollected. Entries are in goal-upward order (closest to the goal first); no guard with a known writer was found, so no entry is preferred.",
+            "source": "guessed"
+        }
+    }
+]
