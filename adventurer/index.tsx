@@ -1594,15 +1594,47 @@ function sleep(ms: number) {
 }
 
 let _debugGameQuestId: string | null = null;
+let _activeDebugGame: any | null = null;
+let _origGetRunningGames: (() => any[]) | null = null;
+let _debugGamesChangeListener: ((action: any) => void) | null = null;
 
 function stopGameDebug() {
-    if (!_debugGameQuestId) return;
-    FluxDispatcher.dispatch({ type: "RUNNING_GAME_SET_DEBUG_GAME", game: null });
+    if (!_debugGameQuestId && !_activeDebugGame) return;
+
+    if (_debugGamesChangeListener) {
+        FluxDispatcher.unsubscribe("RUNNING_GAMES_CHANGE", _debugGamesChangeListener);
+        _debugGamesChangeListener = null;
+    }
+
+    if (_origGetRunningGames && RunningGameStore) {
+        RunningGameStore.getRunningGames = _origGetRunningGames;
+        _origGetRunningGames = null;
+    }
+
+    const stoppedGame = _activeDebugGame;
+    _activeDebugGame = null;
     _debugGameQuestId = null;
+
+    if (stoppedGame) {
+        const remainingGames = RunningGameStore?.getRunningGames?.() ?? [];
+        FluxDispatcher.dispatch({
+            type: "RUNNING_GAMES_CHANGE",
+            games: remainingGames,
+            added: [],
+            removed: [stoppedGame]
+        });
+    }
+
+    FluxDispatcher.dispatch({ type: "RUNNING_GAME_SET_DEBUG_GAME", game: null });
 }
 
 async function launchGameDebug(quest: any, forceExe?: string): Promise<boolean> {
     const appId = getQuestAppId(quest);
+    if (!appId) {
+        console.warn("[Adventurer] launchGameDebug: no appId found for quest", quest?.id);
+        return false;
+    }
+
     const appName = quest?.config?.application?.name ?? quest?.config?.messages?.gameTitle ?? quest?.config?.messages?.questName ?? appId;
 
     let exeName = `${appName}.exe`;
@@ -1618,14 +1650,13 @@ async function launchGameDebug(quest: any, forceExe?: string): Promise<boolean> 
             const exe = appData?.executables?.find((e: any) => e.os === "win32");
             if (exe?.name) {
                 exeName = exe.name.replace(">", "");
+            } else if (appData?.executables?.[0]?.name) {
+                exeName = appData.executables[0].name.replace(">", "");
             } else {
-                if (appData?.executables?.[0]?.name) {
-                    exeName = appData.executables[0].name.replace(">", "");
-                }
-                needsPrompt = true;
+                exeName = `${appName.replace(/[^\w\d]/g, "") || appName}.exe`;
             }
         } catch (e) {
-            needsPrompt = true;
+            exeName = `${appName}.exe`;
         }
     }
 
@@ -1659,18 +1690,61 @@ async function launchGameDebug(quest: any, forceExe?: string): Promise<boolean> 
 
     await sleep(startDelay);
 
+    // Stop any previously active debug game cleanly
+    if (_activeDebugGame || _debugGameQuestId) {
+        stopGameDebug();
+    }
+
     const pid = Math.floor(Math.random() * 30000) + 1000;
     const fakeGame = {
-        id: appId,
+        id: String(appId),
         name: appName,
         exeName,
-        exePath: `C:\\Users\\User\\AppData\\Local\\${appName}\\${exeName}`,
+        exePath: `C:\\Program Files\\${appName}\\${exeName}`,
         pid,
         start: Date.now()
     };
 
-    FluxDispatcher.dispatch({ type: "RUNNING_GAME_SET_DEBUG_GAME", game: fakeGame });
+    _activeDebugGame = fakeGame;
     _debugGameQuestId = quest.id;
+
+    // 1. Hook RunningGameStore.getRunningGames so native scanner ticks don't overwrite it
+    if (!_origGetRunningGames && RunningGameStore?.getRunningGames) {
+        _origGetRunningGames = RunningGameStore.getRunningGames.bind(RunningGameStore);
+        RunningGameStore.getRunningGames = () => {
+            const real = _origGetRunningGames ? _origGetRunningGames() : [];
+            if (_activeDebugGame && !real.some((g: any) => String(g?.id) === String(_activeDebugGame.id))) {
+                return [...real, _activeDebugGame];
+            }
+            return real;
+        };
+    }
+
+    // 2. Intercept incoming RUNNING_GAMES_CHANGE actions to prevent native scanner from removing our fake game
+    if (!_debugGamesChangeListener) {
+        _debugGamesChangeListener = (action: any) => {
+            if (!_activeDebugGame) return;
+            if (Array.isArray(action?.removed)) {
+                action.removed = action.removed.filter((g: any) => String(g?.id) !== String(_activeDebugGame?.id));
+            }
+            if (Array.isArray(action?.games) && !action.games.some((g: any) => String(g?.id) === String(_activeDebugGame?.id))) {
+                action.games.push(_activeDebugGame);
+            }
+        };
+        FluxDispatcher.subscribe("RUNNING_GAMES_CHANGE", _debugGamesChangeListener);
+    }
+
+    // 3. Dispatch RUNNING_GAMES_CHANGE to wake up QuestStore heartbeat loop
+    const currentGames = RunningGameStore?.getRunningGames?.() ?? [fakeGame];
+    FluxDispatcher.dispatch({
+        type: "RUNNING_GAMES_CHANGE",
+        games: currentGames,
+        added: [fakeGame],
+        removed: []
+    });
+
+    // Also dispatch RUNNING_GAME_SET_DEBUG_GAME for overlay / compatibility
+    FluxDispatcher.dispatch({ type: "RUNNING_GAME_SET_DEBUG_GAME", game: fakeGame });
 
     await reportActiveStatus(quest.id, quest, { type: "running", endsAt: 0 });
     return true;
