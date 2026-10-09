@@ -13,6 +13,7 @@ import { buildVolumeScript, pushVolume, VolumeControl } from "./experiences/volu
 
 const QuestStore = findStoreLazy("QuestStore");
 const RunningGameStore = findStoreLazy("RunningGameStore");
+const GameStore = findStoreLazy("GameStore");
 
 function isAppRunning(appId: string): boolean {
     const games = RunningGameStore?.getRunningGames?.() ?? [];
@@ -468,6 +469,11 @@ function toggleSkipQuest(questId: string) {
     if (isSkipped) {
         skipped = skipped.filter(id => id !== questId);
         settings.store.skippedQuestsData = JSON.stringify(skipped);
+        fetch(`${getServer()}/unskip`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ questId, userId: getCurrentUserId() })
+        }).catch(() => {});
         if (settings.store.enableGameTracking) {
             processQuests();
         }
@@ -484,6 +490,91 @@ function toggleSkipQuest(questId: string) {
             }
         }
     }
+}
+
+const _patchedDetectableGames = new Map<string, { exeName: string }>();
+let _origGetDetectableGame: any = null;
+let _origGetGameByExecutable: any = null;
+let _origFindGame: any = null;
+
+function patchGameStoreForApp(appId: string, exeName: string) {
+    if (!GameStore) return;
+    _patchedDetectableGames.set(String(appId), { exeName });
+
+    if (!_origGetDetectableGame && GameStore.getDetectableGame) {
+        _origGetDetectableGame = GameStore.getDetectableGame.bind(GameStore);
+        GameStore.getDetectableGame = function(id: string) {
+            const game = _origGetDetectableGame(id);
+            const patch = _patchedDetectableGames.get(String(id));
+            if (patch && game) {
+                return {
+                    ...game,
+                    executables: [
+                        { name: patch.exeName, os: "win32" },
+                        { name: patch.exeName, os: "linux" }
+                    ]
+                };
+            }
+            return game;
+        };
+    }
+
+    if (!_origGetGameByExecutable && GameStore.getGameByExecutable) {
+        _origGetGameByExecutable = GameStore.getGameByExecutable.bind(GameStore);
+        GameStore.getGameByExecutable = function(exe: string) {
+            if (exe) {
+                const cleanExe = exe.toLowerCase().replace(/\\/g, "/").split("/").pop() ?? "";
+                for (const [id, patch] of _patchedDetectableGames.entries()) {
+                    if (cleanExe === patch.exeName.toLowerCase()) {
+                        return GameStore.getDetectableGame(id);
+                    }
+                }
+            }
+            return _origGetGameByExecutable(exe);
+        };
+    }
+
+    if (!_origFindGame && GameStore.findGame) {
+        _origFindGame = GameStore.findGame.bind(GameStore);
+        GameStore.findGame = function(query: any, cb: any) {
+            if (query?.exePath) {
+                const cleanExe = String(query.exePath).toLowerCase().replace(/\\/g, "/").split("/").pop() ?? "";
+                for (const [id, patch] of _patchedDetectableGames.entries()) {
+                    if (cleanExe === patch.exeName.toLowerCase()) {
+                        return GameStore.getDetectableGame(id);
+                    }
+                }
+            }
+            if (query?.name) {
+                const queryName = String(query.name).toLowerCase();
+                for (const [id] of _patchedDetectableGames.entries()) {
+                    const patchedGame = GameStore.getDetectableGame(id);
+                    if (patchedGame?.name && patchedGame.name.toLowerCase() === queryName) {
+                        return patchedGame;
+                    }
+                }
+            }
+            return _origFindGame(query, cb);
+        };
+    }
+}
+
+function unpatchGameStore() {
+    if (GameStore) {
+        if (_origGetDetectableGame) {
+            GameStore.getDetectableGame = _origGetDetectableGame;
+            _origGetDetectableGame = null;
+        }
+        if (_origGetGameByExecutable) {
+            GameStore.getGameByExecutable = _origGetGameByExecutable;
+            _origGetGameByExecutable = null;
+        }
+        if (_origFindGame) {
+            GameStore.findGame = _origFindGame;
+            _origFindGame = null;
+        }
+    }
+    _patchedDetectableGames.clear();
 }
 
 function showFallbackModal(appId: string, fallbackExe: string): Promise<"try" | "skip" | "cancel"> {
@@ -505,14 +596,14 @@ function showFallbackModal(appId: string, fallbackExe: string): Promise<"try" | 
         modal.innerHTML = `
             <div style="font-size: 20px; font-weight: 700; color: var(--header-primary, #f2f3f5);">Executable Not Found</div>
             <div style="font-size: 14px; color: var(--text-normal, #dbdee1); line-height: 1.4;">
-                Unable to find an executable path for ID <strong style="color: var(--text-normal, #f2f3f5);">${appId}</strong> in the detectable list.
+                Unable to find an executable for ID <strong style="color: var(--text-normal, #f2f3f5);">${appId}</strong> in Discord's detectable list.
                 <br><br>
-                Would you like to try <strong style="color: var(--text-normal, #f2f3f5);">${fallbackExe}</strong> or skip this quest?
+                Would you like to push <strong style="color: var(--text-normal, #f2f3f5);">${fallbackExe}</strong> to Discord's in-memory game detection database and start tracking, or skip this quest?
             </div>
             <div style="display: flex; gap: 8px; justify-content: flex-end; margin-top: 8px;">
                 <button id="adventurer-modal-cancel" style="padding: 8px 16px; border-radius: 4px; border: none; cursor: pointer; font-weight: 600; background: transparent; color: var(--text-normal, #dbdee1);">Cancel</button>
                 <button id="adventurer-modal-skip" style="padding: 8px 16px; border-radius: 4px; border: none; cursor: pointer; font-weight: 600; background: var(--button-danger-background, #da373c); color: #fff;">Skip Quest</button>
-                <button id="adventurer-modal-try" style="padding: 8px 16px; border-radius: 4px; border: none; cursor: pointer; font-weight: 600; background: var(--button-positive-background, #23a55a); color: #fff;">Try ${fallbackExe}</button>
+                <button id="adventurer-modal-try" style="padding: 8px 16px; border-radius: 4px; border: none; cursor: pointer; font-weight: 600; background: var(--button-positive-background, #23a55a); color: #fff;">Push Fake Executable</button>
             </div>
         `;
 
@@ -836,19 +927,14 @@ async function sendHeartbeat(force = false) {
             }
             _prevAutoCompleteEnabled = data?.auto_complete_enabled ?? null;
             if (data?.skipped_quest_ids && Array.isArray(data.skipped_quest_ids)) {
-                let currentSkipped = getSkippedQuests();
-                let changed = false;
-                for (const sqId of data.skipped_quest_ids) {
-                    if (!currentSkipped.includes(sqId)) {
-                        currentSkipped.push(sqId);
-                        changed = true;
-                    }
-                }
-                if (changed) {
-                    settings.store.skippedQuestsData = JSON.stringify(currentSkipped);
+                const serverSkipped = data.skipped_quest_ids;
+                const currentSkipped = getSkippedQuests();
+                const areEqual = serverSkipped.length === currentSkipped.length && serverSkipped.every(id => currentSkipped.includes(id));
+                if (!areEqual) {
+                    settings.store.skippedQuestsData = JSON.stringify(serverSkipped);
                     document.querySelectorAll("article[id^='quest-tile-']").forEach(applySkipVisuals);
                     const activeQ = getAcceptedQuests().find(q => (q?.config?.messages?.questName ?? q?.id) === _barState.activeQuestName);
-                    if (activeQ && currentSkipped.includes(activeQ.id) && running) {
+                    if (activeQ && serverSkipped.includes(activeQ.id) && running) {
                         running = false;
                         updateBar({ activeQuestName: null, forceKillVisible: false });
                         processQuests();
@@ -1726,6 +1812,7 @@ async function launchGameDebug(quest: any, forceExe?: string): Promise<boolean> 
     if (needsPrompt && !forceExe) {
         const choice = await showFallbackModal(appId, exeName);
         if (choice === "try") {
+            patchGameStoreForApp(appId, exeName);
             return await launchGameDebug(quest, exeName);
         } else if (choice === "skip") {
             toggleSkipQuest(quest.id);
@@ -1841,6 +1928,9 @@ async function stopGame(questName?: string, pauseAutoComplete = false) {
         stopGameDebug();
         await reportActiveStatus(null, null, null);
     } else {
+        if (_activeDebugGame) {
+            stopGameDebug();
+        }
         try {
             await fetch(`${getServer()}/stop`, {
                 method: "POST",
@@ -1890,6 +1980,8 @@ async function launchGame(appId: string, quest: any, forceExe?: string): Promise
                 if (data?.requires_confirmation && data.fallback_exe) {
                     const choice = await showFallbackModal(appId, data.fallback_exe);
                     if (choice === "try") {
+                        patchGameStoreForApp(appId, data.fallback_exe);
+                        await launchGameDebug(quest, data.fallback_exe);
                         return await launchGame(appId, quest, data.fallback_exe);
                     } else if (choice === "skip") {
                         toggleSkipQuest(quest.id);
@@ -3222,8 +3314,9 @@ export default definePlugin({
             _heartbeatIntervalHandle = null;
         }
 
-        if (_debugGameQuestId) stopGameDebug();
-        else {
+        if (_debugGameQuestId || _activeDebugGame) stopGameDebug();
+        unpatchGameStore();
+        if (!_debugGameQuestId) {
             fetch(`${getServer()}/stop`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },

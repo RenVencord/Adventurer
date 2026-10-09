@@ -692,6 +692,21 @@ def skip():
     return jsonify({"error": "missing questId"}), 400
 
 
+@app.route("/unskip", methods=["POST"])
+def unskip():
+    body = request.get_json(silent=True) or {}
+    user_id = body.get("userId") if body else None
+    quest_id = body.get("questId")
+
+    if quest_id:
+        server_state.remove_skipped_quest(quest_id)
+        msg = f"Quest unskipped: {quest_id}"
+        log.info(msg)
+        server_state.log_event(msg, user_id)
+        return jsonify({"status": "unskipped", "questId": quest_id})
+    return jsonify({"error": "missing questId"}), 400
+
+
 @app.route("/reset", methods=["POST"])
 def reset():
     body = request.get_json(silent=True) or {}
@@ -699,6 +714,7 @@ def reset():
 
     _kill_all_running()
     server_state.set_active_quest(None, None, None, 0)
+    server_state.set_skipped_quests([])
     cleanup_stubs()
 
     msg = "Server state reset by plugin"
@@ -729,9 +745,8 @@ def heartbeat():
         return jsonify({"error": "quests must be an array"}), 400
 
     skipped_from_plugin = body.get("skippedQuests")
-    if skipped_from_plugin and isinstance(skipped_from_plugin, list):
-        for sq_id in skipped_from_plugin:
-            server_state.add_skipped_quest(sq_id)
+    if skipped_from_plugin is not None and isinstance(skipped_from_plugin, list):
+        server_state.set_skipped_quests(skipped_from_plugin)
 
     assisted_from_plugin = body.get("assistedQuestIds")
     if assisted_from_plugin and isinstance(assisted_from_plugin, list):
