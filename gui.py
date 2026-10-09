@@ -1513,9 +1513,11 @@ class DiscordClientSelectDialog(QDialog):
 
 
 class VencordManagerDialog(QDialog):
-    def __init__(self, prefs: dict, parent=None):
+    def __init__(self, prefs: dict, parent=None, auto_start: str | None = None):
         super().__init__(parent)
         self._prefs = prefs
+        self._auto_start = auto_start
+        self._current_mode = None
         self.setWindowTitle("Vencord Manager")
         self.setFixedWidth(500)
         self.setStyleSheet(f"""
@@ -1600,6 +1602,11 @@ class VencordManagerDialog(QDialog):
 
         self.adjustSize()
         self._build_worker = None
+
+        if self._auto_start == "setup":
+            QTimer.singleShot(150, self._on_setup_vencord)
+        elif self._auto_start == "inject":
+            QTimer.singleShot(150, self._on_inject_vencord)
 
     def _set_ui_busy(self, busy: bool):
         self.btn_build_vencord.setEnabled(not busy)
@@ -1697,6 +1704,7 @@ class VencordManagerDialog(QDialog):
         self._start_build_worker(target_dir, "setup", inject_targets=branches)
 
     def _start_build_worker(self, target_dir: str, mode: str, inject_targets: list[str] = None):
+        self._current_mode = mode
         self._build_worker = vencord_helper.VencordBuildWorker(
             target_dir,
             mode=mode,
@@ -1712,7 +1720,24 @@ class VencordManagerDialog(QDialog):
         self._set_ui_busy(False)
         self.vencord_log.appendPlainText(f"\nStatus: {message}")
         if success:
-            QMessageBox.information(self, "Vencord Operation Complete", f"{message}\n\nPlease restart Discord (Ctrl+R) to apply changes.")
+            if getattr(self, "_current_mode", "") in ("inject", "setup"):
+                info_text = (
+                    f"{message}\n\n"
+                    "Next Steps:\n"
+                    "1. Open Discord.\n"
+                    "2. In Discord, open User Settings (gear icon in the bottom left).\n"
+                    "3. Under 'Vencord' in the sidebar, select 'Plugins'.\n"
+                    "4. Search for 'Adventurer' and toggle it ON."
+                )
+                QMessageBox.information(self, "Vencord Injection Complete", info_text)
+            else:
+                info_text = (
+                    f"{message}\n\n"
+                    "If Discord is open, reload it (Ctrl+R) or reopen Discord to apply changes.\n\n"
+                    "Make sure the plugin is enabled in:\n"
+                    "User Settings > Plugins (under Vencord) > Adventurer"
+                )
+                QMessageBox.information(self, "Vencord Build Complete", info_text)
         else:
             QMessageBox.critical(self, "Vencord Operation Failed", message)
 
@@ -2555,19 +2580,67 @@ class MainWindow(QMainWindow):
         self._setup_ui()
         self._setup_timer()
         self._start_update_checker()
-        self._check_vencord_path_on_startup()
+
+        self._vencord_dialog_open = False
+        self._vencord_prompt_active = False
+
+        # Periodic check: every 5 minutes while no client connected, check if any installed Discord is patched
+        self._unpatched_check_timer = QTimer(self)
+        self._unpatched_check_timer.setInterval(300000)  # 5 minutes
+        self._unpatched_check_timer.timeout.connect(self._check_unpatched_clients)
+        self._unpatched_check_timer.start()
+
+        # Check on startup shortly after the window renders
+        QTimer.singleShot(1500, self._check_unpatched_clients)
 
         self._upd_timer = QTimer(self)
         self._upd_timer.setInterval(3600000)
         self._upd_timer.timeout.connect(self._start_update_checker)
         self._upd_timer.start()
 
-    def _check_vencord_path_on_startup(self):
-        vencord_dir = self._prefs.get("vencord_source_dir", "").strip()
-        if not vencord_dir or not os.path.exists(vencord_dir):
-            auto_dir = vencord_helper.find_vencord_dir()
-            if not auto_dir or not os.path.exists(auto_dir):
-                QTimer.singleShot(400, self._open_vencord_settings)
+    def _check_unpatched_clients(self):
+        # Do not prompt if a client is already connected via heartbeat
+        if server_state.get_users():
+            return
+
+        # Do not prompt if a prompt or Vencord dialog is already active, or worker is running
+        if getattr(self, "_vencord_prompt_active", False) or getattr(self, "_vencord_dialog_open", False):
+            return
+        if self._plugin_worker and self._plugin_worker.isRunning():
+            return
+
+        # Check if at least one installed Discord client is already patched with Vencord
+        if vencord_helper.has_any_patched_discord():
+            return
+
+        discords = vencord_helper.find_installed_discords()
+        self._vencord_prompt_active = True
+        try:
+            if discords:
+                names = ", ".join(d.get("name", "Discord") for d in discords)
+                msg = (
+                    f"Adventurer detected Discord ({names}), but Vencord is not currently injected into any client.\n\n"
+                    "Without Vencord injection, Adventurer cannot connect to Discord or track quests.\n\n"
+                    "Would you like to sync, build, and inject Vencord now?"
+                )
+            else:
+                msg = (
+                    "Adventurer did not detect any Discord clients patched with Vencord.\n\n"
+                    "Without Vencord injection, Adventurer cannot connect to Discord or track quests.\n\n"
+                    "Would you like to sync, build, and inject Vencord now?"
+                )
+
+            reply = QMessageBox.question(
+                self,
+                "Vencord Injection Required",
+                msg,
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.Yes
+            )
+            if reply == QMessageBox.StandardButton.Yes:
+                self._open_vencord_settings(auto_start="setup")
+        finally:
+            self._vencord_prompt_active = False
 
     def _start_update_checker(self):
         if self._prefs.get("update_scope", "Any") == "None":
@@ -2651,7 +2724,10 @@ class MainWindow(QMainWindow):
                     QMessageBox.information(
                         self,
                         "Plugin Updated & Vencord Rebuilt",
-                        f"Adventurer Plugin has been updated to {version} and Vencord was successfully rebuilt!\n\nPlease restart Discord (Ctrl+R) to apply changes."
+                        f"Adventurer Plugin has been updated to {version} and Vencord was successfully rebuilt!\n\n"
+                        "Please reopen Discord or press Ctrl+R to reload changes.\n\n"
+                        "Make sure the plugin is enabled in:\n"
+                        "User Settings > Plugins (under Vencord) > Adventurer"
                     )
                 else:
                     QMessageBox.warning(self, "Vencord Build Failed", f"Plugin files were updated, but Vencord build failed:\n{msg}")
@@ -3132,11 +3208,15 @@ class MainWindow(QMainWindow):
             self._prefs = dlg.get_prefs()
             save_prefs(self._prefs)
 
-    def _open_vencord_settings(self):
-        dlg = VencordManagerDialog(self._prefs, self)
-        if dlg.exec() == QDialog.DialogCode.Accepted:
-            self._prefs = dlg.get_prefs()
-            save_prefs(self._prefs)
+    def _open_vencord_settings(self, auto_start: str | None = None):
+        self._vencord_dialog_open = True
+        try:
+            dlg = VencordManagerDialog(self._prefs, self, auto_start=auto_start)
+            if dlg.exec() == QDialog.DialogCode.Accepted:
+                self._prefs = dlg.get_prefs()
+                save_prefs(self._prefs)
+        finally:
+            self._vencord_dialog_open = False
 
     def _open_logging_settings(self):
         dlg = LoggingSettingsDialog(self._prefs, self)

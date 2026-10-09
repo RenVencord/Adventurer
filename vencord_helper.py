@@ -103,12 +103,17 @@ def find_installed_discords() -> list[dict]:
             latest_app = app_dirs[-1] if app_dirs else ""
             latest_dir = os.path.join(base_dir, latest_app) if latest_app else base_dir
 
-            # Check if patched with Vencord
+            # Check if patched with Vencord across all version directories
             is_patched = False
-            resources_dir = os.path.join(latest_dir, "resources")
-            if os.path.isdir(resources_dir):
-                if os.path.isdir(os.path.join(resources_dir, "app")) or os.path.isfile(os.path.join(resources_dir, "_app.asar")):
-                    is_patched = True
+            check_dirs = [os.path.join(base_dir, ad) for ad in reversed(app_dirs)] if app_dirs else [base_dir]
+            for ad_path in check_dirs:
+                resources_dir = os.path.join(ad_path, "resources")
+                if os.path.isdir(resources_dir):
+                    if (os.path.isdir(os.path.join(resources_dir, "app")) or
+                        os.path.isfile(os.path.join(resources_dir, "_app.asar")) or
+                        os.path.isfile(os.path.join(resources_dir, "app.asar.backup"))):
+                        is_patched = True
+                        break
 
             # Find icon: app.ico in base_dir or latest_dir
             icon_path = os.path.join(base_dir, "app.ico")
@@ -152,7 +157,7 @@ def find_installed_discords() -> list[dict]:
                     break
             if found:
                 res_dir = os.path.join(found, "resources")
-                is_patched = os.path.isdir(os.path.join(res_dir, "app")) or os.path.isfile(os.path.join(res_dir, "_app.asar"))
+                is_patched = os.path.isdir(os.path.join(res_dir, "app")) or os.path.isfile(os.path.join(res_dir, "_app.asar")) or os.path.isfile(os.path.join(res_dir, "app.asar.backup"))
                 results.append({
                     "id": cid,
                     "name": display_name,
@@ -174,7 +179,7 @@ def find_installed_discords() -> list[dict]:
         for cid, display_name, branch, app_path in specs:
             if os.path.isdir(app_path):
                 res_dir = os.path.join(app_path, "Contents", "Resources")
-                is_patched = os.path.isdir(os.path.join(res_dir, "app")) or os.path.isfile(os.path.join(res_dir, "_app.asar"))
+                is_patched = os.path.isdir(os.path.join(res_dir, "app")) or os.path.isfile(os.path.join(res_dir, "_app.asar")) or os.path.isfile(os.path.join(res_dir, "app.asar.backup"))
                 results.append({
                     "id": cid,
                     "name": display_name,
@@ -187,6 +192,12 @@ def find_installed_discords() -> list[dict]:
                 })
 
     return results
+
+
+def has_any_patched_discord() -> bool:
+    """Return True if at least one detected Discord client has Vencord injected."""
+    discords = find_installed_discords()
+    return any(d.get("is_patched", False) for d in discords)
 
 
 def find_vencord_dir(custom_path: str = None) -> str | None:
