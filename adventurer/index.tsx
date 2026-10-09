@@ -55,6 +55,69 @@ function updateBar(patch: Partial<typeof _barState>) {
 
 const LOGO_URL = "https://raw.githubusercontent.com/RenVencord/Adventurer/refs/heads/main/assets/logo.png";
 
+const ToastType = {
+    get MESSAGE() {
+        return (Toasts as any)?.Type?.MESSAGE ?? (Toasts as any)?.ToastType?.MESSAGE ?? (Toasts as any)?.ToastType?.NORMAL ?? 0;
+    },
+    get SUCCESS() {
+        return (Toasts as any)?.Type?.SUCCESS ?? (Toasts as any)?.ToastType?.SUCCESS ?? 1;
+    },
+    get FAILURE() {
+        return (Toasts as any)?.Type?.FAILURE ?? (Toasts as any)?.Type?.ERROR ?? (Toasts as any)?.ToastType?.FAILURE ?? (Toasts as any)?.ToastType?.ERROR ?? 2;
+    },
+    get CUSTOM() {
+        return (Toasts as any)?.Type?.CUSTOM ?? (Toasts as any)?.ToastType?.CUSTOM ?? 3;
+    }
+};
+
+let _toastIdCounter = 0;
+function toastGenId(): string {
+    try {
+        if (typeof (Toasts as any)?.genId === "function") {
+            return (Toasts as any).genId();
+        }
+    } catch { }
+    return `adventurer-${Date.now()}-${++_toastIdCounter}`;
+}
+
+try {
+    if (typeof Toasts !== "undefined" && Toasts) {
+        if (!(Toasts as any).Type) {
+            (Toasts as any).Type = ToastType;
+        }
+        if (!(Toasts as any).genId) {
+            (Toasts as any).genId = toastGenId;
+        }
+    }
+} catch { }
+
+function showToastSafe(props: { message: string; type?: any; id?: string; options?: any }) {
+    const id = props.id ?? toastGenId();
+    const type = props.type ?? ToastType.MESSAGE;
+    try {
+        if (typeof (Toasts as any)?.show === "function") {
+            (Toasts as any).show({
+                ...props,
+                id,
+                type
+            });
+            return;
+        }
+    } catch (e) {
+        console.warn("[Adventurer] Toasts.show failed:", e);
+    }
+
+    try {
+        showNotification({
+            title: "Adventurer",
+            body: props.message,
+            icon: LOGO_URL
+        });
+    } catch (e) {
+        console.warn("[Adventurer] showNotification fallback failed:", e);
+    }
+}
+
 const SERVER_DEFAULT_PORT = 5000;
 
 function getServer() {
@@ -1681,10 +1744,10 @@ async function launchGameDebug(quest: any, forceExe?: string): Promise<boolean> 
     const endsAt = Date.now() + startDelay;
     await reportActiveStatus(quest.id, quest, { type: "waiting", endsAt });
 
-    Toasts.show({
+    showToastSafe({
         message: `Starting "${appName}" in ${Math.round(startDelay / 1000)}s...`,
-        type: Toasts.Type.MESSAGE,
-        id: Toasts.genId(),
+        type: ToastType.MESSAGE,
+        id: toastGenId(),
         options: { duration: Math.min(startDelay, 5000) }
     });
 
@@ -1760,10 +1823,10 @@ async function stopGame(questName?: string, pauseAutoComplete = false) {
         const stopDelay = minMs + Math.random() * range;
 
         if (questName) {
-            Toasts.show({
+            showToastSafe({
                 message: `Stopping "${questName}" in ${Math.round(stopDelay / 1000)}s...`,
-                type: Toasts.Type.MESSAGE,
-                id: Toasts.genId(),
+                type: ToastType.MESSAGE,
+                id: toastGenId(),
                 options: { duration: Math.min(stopDelay, 5000) }
             });
         }
@@ -1798,10 +1861,10 @@ async function handleForceKill() {
         if (q?.id) seen.add(q.id);
     }
     updateBar({ activeQuestName: null, forceKillVisible: false });
-    Toasts.show({
+    showToastSafe({
         message: "Force killed active quest processes.",
-        type: Toasts.Type.FAILURE,
-        id: Toasts.genId()
+        type: ToastType.FAILURE,
+        id: toastGenId()
     });
 }
 
@@ -1917,10 +1980,10 @@ async function waitForCompletion(quest: any, taskKey: string, target: number, qu
         cleanup();
 
         if (!completed || gameClosed) {
-            Toasts.show({
+            showToastSafe({
                 message: `Game closed — stopped "${questName}"`,
-                type: Toasts.Type.FAILURE,
-                id: Toasts.genId(),
+                type: ToastType.FAILURE,
+                id: toastGenId(),
                 options: { duration: 4000 }
             });
             running = false;
@@ -1937,10 +2000,10 @@ async function waitForCompletion(quest: any, taskKey: string, target: number, qu
 
         const buffer = 20 + Math.floor(Math.random() * 41);
 
-        Toasts.show({
+        showToastSafe({
             message: `"${questName}" complete - waiting ${buffer}s buffer`,
-            type: Toasts.Type.SUCCESS,
-            id: Toasts.genId(),
+            type: ToastType.SUCCESS,
+            id: toastGenId(),
             options: { duration: 4000 }
         });
 
@@ -1967,10 +2030,10 @@ async function waitForCompletion(quest: any, taskKey: string, target: number, qu
 
         if (gameClosed) {
             cleanup();
-            Toasts.show({
+            showToastSafe({
                 message: `Game closed — stopped "${questName}"`,
-                type: Toasts.Type.FAILURE,
-                id: Toasts.genId(),
+                type: ToastType.FAILURE,
+                id: toastGenId(),
                 options: { duration: 4000 }
             });
             running = false;
@@ -2002,10 +2065,10 @@ async function waitForCompletion(quest: any, taskKey: string, target: number, qu
             await stopGame(questName);
 
             const buffer = 20 + Math.floor(Math.random() * 41);
-            Toasts.show({
+            showToastSafe({
                 message: `"${questName}" complete - waiting ${buffer}s buffer`,
-                type: Toasts.Type.SUCCESS,
-                id: Toasts.genId(),
+                type: ToastType.SUCCESS,
+                id: toastGenId(),
                 options: { duration: 4000 }
             });
             await sleep(buffer * 1000);
@@ -2046,10 +2109,10 @@ async function runQueue() {
                 continue;
             }
 
-            Toasts.show({
+            showToastSafe({
                 message: `Watching "${questName}" - tab away freely`,
-                type: Toasts.Type.MESSAGE,
-                id: Toasts.genId(),
+                type: ToastType.MESSAGE,
+                id: toastGenId(),
                 options: { duration: 4000 }
             });
 
@@ -2073,10 +2136,10 @@ async function runQueue() {
                 continue;
             }
 
-            Toasts.show({
+            showToastSafe({
                 message: `Running "${questName}"...`,
-                type: Toasts.Type.MESSAGE,
-                id: Toasts.genId(),
+                type: ToastType.MESSAGE,
+                id: toastGenId(),
                 options: { duration: 3000 }
             });
 
@@ -2088,10 +2151,10 @@ async function runQueue() {
             }
         }
 
-        Toasts.show({
+        showToastSafe({
             message: `Finished "${questName}"`,
-            type: Toasts.Type.SUCCESS,
-            id: Toasts.genId(),
+            type: ToastType.SUCCESS,
+            id: toastGenId(),
             options: { duration: 3000 }
         });
     }
@@ -2341,7 +2404,7 @@ async function fetchAndProcess() {
     const all = getAllQuests();
 
     if (all.length === 0) {
-        Toasts.show({ message: "No quests found.", type: Toasts.Type.MESSAGE, id: Toasts.genId(), options: { duration: 3000 } });
+        showToastSafe({ message: "No quests found.", type: ToastType.MESSAGE, id: toastGenId(), options: { duration: 3000 } });
         return;
     }
 
@@ -2349,7 +2412,7 @@ async function fetchAndProcess() {
 
     const claimable = all.filter(isQuestClaimable);
     if (claimable.length > 0) {
-        Toasts.show({ message: `Claiming ${claimable.length} reward(s)...`, type: Toasts.Type.MESSAGE, id: Toasts.genId(), options: { duration: 3000 } });
+        showToastSafe({ message: `Claiming ${claimable.length} reward(s)...`, type: ToastType.MESSAGE, id: toastGenId(), options: { duration: 3000 } });
         for (const q of claimable) {
             try {
                 await RestAPI.post({
@@ -2376,7 +2439,7 @@ async function fetchAndProcess() {
     );
 
     if (unenrolled.length > 0) {
-        Toasts.show({ message: `Auto-enrolling in ${unenrolled.length} new quest(s)...`, type: Toasts.Type.MESSAGE, id: Toasts.genId(), options: { duration: 3000 } });
+        showToastSafe({ message: `Auto-enrolling in ${unenrolled.length} new quest(s)...`, type: ToastType.MESSAGE, id: toastGenId(), options: { duration: 3000 } });
         for (const q of unenrolled) {
             try {
                 await RestAPI.post({
@@ -2402,15 +2465,15 @@ async function fetchAndProcess() {
 
     if (incomplete.length === 0) {
         if (claimable.length === 0) {
-            Toasts.show({ message: "No incomplete quests found.", type: Toasts.Type.MESSAGE, id: Toasts.genId(), options: { duration: 3000 } });
+            showToastSafe({ message: "No incomplete quests found.", type: ToastType.MESSAGE, id: toastGenId(), options: { duration: 3000 } });
         }
         return;
     }
 
-    Toasts.show({
+    showToastSafe({
         message: `Found ${incomplete.length} quest${incomplete.length === 1 ? "" : "s"} to run...`,
-        type: Toasts.Type.MESSAGE,
-        id: Toasts.genId(),
+        type: ToastType.MESSAGE,
+        id: toastGenId(),
         options: { duration: 3000 }
     });
 
@@ -2593,7 +2656,7 @@ function ThreeDotMenu({ open, setOpen }: { open: boolean, setOpen: (v: boolean) 
                         label={settings.store.gameTrackingMode === "server" ? "Switch to Risky Tracking" : "Switch to Safe Tracking"}
                         onClick={() => {
                             settings.store.gameTrackingMode = settings.store.gameTrackingMode === "server" ? "debug" : "server";
-                            Toasts.show({ message: `Switched to ${settings.store.gameTrackingMode} tracking mode`, type: Toasts.Type.SUCCESS, id: Toasts.genId() });
+                            showToastSafe({ message: `Switched to ${settings.store.gameTrackingMode} tracking mode`, type: ToastType.SUCCESS, id: toastGenId() });
                             setOpen(false);
                         }}
                     />
@@ -2915,10 +2978,10 @@ export default definePlugin({
             await Promise.all([claimPromise.catch(() => { }), sleep(800)]);
 
             if (resultSuccess) {
-                Toasts.show({
+                showToastSafe({
                     message: "Reward claimed!",
-                    type: Toasts.Type.SUCCESS,
-                    id: Toasts.genId(),
+                    type: ToastType.SUCCESS,
+                    id: toastGenId(),
                     options: { duration: 3000 }
                 });
                 setClaimState("idle");
@@ -2929,10 +2992,10 @@ export default definePlugin({
                         console.log("[Adventurer] Claim reward fallback captcha cancelled.");
                     } else {
                         console.error("[Adventurer] Failed to claim reward:", resultError);
-                        Toasts.show({
+                        showToastSafe({
                             message: "Failed to claim reward — check console",
-                            type: Toasts.Type.FAILURE,
-                            id: Toasts.genId(),
+                            type: ToastType.FAILURE,
+                            id: toastGenId(),
                             options: { duration: 4000 }
                         });
                     }

@@ -55,14 +55,148 @@ def is_valid_vencord_source_dir(path: str) -> bool:
     return (has_build_script or has_plugins_dir) and has_build_pkg
 
 
+def find_installed_discords() -> list[dict]:
+    """Find installed Discord desktop clients on the system.
+    
+    Returns a list of dicts with:
+      - id: "stable", "ptb", "canary", "dev"
+      - name: "Discord", "Discord PTB", "Discord Canary", "Discord Development"
+      - branch: "stable", "ptb", "canary", "dev"
+      - path: directory path
+      - icon_path: path to app.ico (or empty string)
+      - is_patched: True if Vencord is currently injected
+      - version: Discord version string (e.g. "1.0.9168")
+    """
+    results = []
+
+    if sys.platform == "win32":
+        local_app_data = os.environ.get("LOCALAPPDATA") or os.path.expandvars(r"%LOCALAPPDATA%")
+        candidates = [
+            ("stable", "Discord", "stable", "Discord"),
+            ("ptb", "Discord PTB", "ptb", "DiscordPTB"),
+            ("canary", "Discord Canary", "canary", "DiscordCanary"),
+            ("dev", "Discord Development", "dev", "DiscordDevelopment"),
+        ]
+
+        for cid, display_name, branch, folder_name in candidates:
+            base_dir = os.path.join(local_app_data, folder_name)
+            if not os.path.isdir(base_dir):
+                continue
+
+            # Look for versioned folders app-<version>
+            app_dirs = []
+            try:
+                for entry in os.listdir(base_dir):
+                    if entry.startswith("app-") and os.path.isdir(os.path.join(base_dir, entry)):
+                        app_dirs.append(entry)
+            except Exception:
+                continue
+
+            if not app_dirs:
+                try:
+                    if not any(f.lower().endswith(".exe") for f in os.listdir(base_dir)):
+                        continue
+                except Exception:
+                    continue
+
+            app_dirs.sort()
+            latest_app = app_dirs[-1] if app_dirs else ""
+            latest_dir = os.path.join(base_dir, latest_app) if latest_app else base_dir
+
+            # Check if patched with Vencord
+            is_patched = False
+            resources_dir = os.path.join(latest_dir, "resources")
+            if os.path.isdir(resources_dir):
+                if os.path.isdir(os.path.join(resources_dir, "app")) or os.path.isfile(os.path.join(resources_dir, "_app.asar")):
+                    is_patched = True
+
+            # Find icon: app.ico in base_dir or latest_dir
+            icon_path = os.path.join(base_dir, "app.ico")
+            if not os.path.isfile(icon_path):
+                cand = os.path.join(latest_dir, "app.ico")
+                if os.path.isfile(cand):
+                    icon_path = cand
+                else:
+                    icon_path = ""
+
+            ver_str = latest_app.replace("app-", "") if latest_app else ""
+
+            results.append({
+                "id": cid,
+                "name": display_name,
+                "branch": branch,
+                "path": base_dir,
+                "latest_path": latest_dir,
+                "icon_path": icon_path,
+                "is_patched": is_patched,
+                "version": ver_str,
+            })
+
+    elif sys.platform.startswith("linux"):
+        specs = [
+            ("stable", "Discord", "stable", ["discord", "Discord"]),
+            ("ptb", "Discord PTB", "ptb", ["discord-ptb", "DiscordPTB"]),
+            ("canary", "Discord Canary", "canary", ["discord-canary", "DiscordCanary"]),
+            ("dev", "Discord Development", "dev", ["discord-development", "DiscordDevelopment"]),
+        ]
+        bases = ["/opt", "/usr/share", "/usr/lib", os.path.expanduser("~/.local/share")]
+        for cid, display_name, branch, names in specs:
+            found = None
+            for base in bases:
+                for name in names:
+                    p = os.path.join(base, name)
+                    if os.path.isdir(p):
+                        found = p
+                        break
+                if found:
+                    break
+            if found:
+                res_dir = os.path.join(found, "resources")
+                is_patched = os.path.isdir(os.path.join(res_dir, "app")) or os.path.isfile(os.path.join(res_dir, "_app.asar"))
+                results.append({
+                    "id": cid,
+                    "name": display_name,
+                    "branch": branch,
+                    "path": found,
+                    "latest_path": found,
+                    "icon_path": os.path.join(found, "discord.png"),
+                    "is_patched": is_patched,
+                    "version": "",
+                })
+
+    elif sys.platform == "darwin":
+        specs = [
+            ("stable", "Discord", "stable", "/Applications/Discord.app"),
+            ("ptb", "Discord PTB", "ptb", "/Applications/Discord PTB.app"),
+            ("canary", "Discord Canary", "canary", "/Applications/Discord Canary.app"),
+            ("dev", "Discord Development", "dev", "/Applications/Discord Development.app"),
+        ]
+        for cid, display_name, branch, app_path in specs:
+            if os.path.isdir(app_path):
+                res_dir = os.path.join(app_path, "Contents", "Resources")
+                is_patched = os.path.isdir(os.path.join(res_dir, "app")) or os.path.isfile(os.path.join(res_dir, "_app.asar"))
+                results.append({
+                    "id": cid,
+                    "name": display_name,
+                    "branch": branch,
+                    "path": app_path,
+                    "latest_path": app_path,
+                    "icon_path": os.path.join(res_dir, "electron.icns"),
+                    "is_patched": is_patched,
+                    "version": "",
+                })
+
+    return results
+
+
 def find_vencord_dir(custom_path: str = None) -> str | None:
     if custom_path and is_valid_vencord_source_dir(custom_path):
         return os.path.abspath(custom_path)
 
     candidates = [
+        os.path.join(os.path.expanduser("~"), "Documents", "Vencord"),
         os.path.join(os.path.expanduser("~"), "Vencord"),
         "C:\\Vencord",
-        os.path.join(os.path.expanduser("~"), "Documents", "Vencord"),
         os.path.join(os.path.expanduser("~"), "src", "Vencord"),
         os.path.join(os.path.expanduser("~"), "Projects", "Vencord"),
     ]
@@ -449,13 +583,14 @@ class VencordBuildWorker(QThread):
     # Emitted with the bundled plugin version when the bundled plugin files were installed into Vencord.
     plugin_synced_signal = pyqtSignal(str)
 
-    def __init__(self, vencord_dir: str, mode: str = "build", sync_plugin: bool = True, installed_plugin_version: str = ""):
+    def __init__(self, vencord_dir: str, mode: str = "build", sync_plugin: bool = True, installed_plugin_version: str = "", inject_targets: list[str] = None):
         super().__init__()
         self.vencord_dir = vencord_dir
         self.mode = mode
         # False when the plugin in Vencord was just updated from GitHub: syncing the bundled copy would undo it.
         self.sync_plugin = sync_plugin
         self.installed_plugin_version = installed_plugin_version
+        self.inject_targets = inject_targets or ["auto"]
 
     def _sync_plugin_files(self) -> bool:
         if not self.sync_plugin:
@@ -476,6 +611,80 @@ class VencordBuildWorker(QThread):
                 f"the installed plugin ({self.installed_plugin_version}) is newer."
             )
         return True
+
+    def _execute_injection(self, pm: str) -> tuple[bool, str]:
+        targets = self.inject_targets or ["auto"]
+        results = []
+        overall_ok = True
+
+        installer_name = "VencordInstallerCli.exe" if sys.platform == "win32" else "VencordInstallerCli"
+        direct_exe = os.path.join(self.vencord_dir, "dist", "Installer", installer_name)
+        pm_bin = shutil.which(pm) or pm
+
+        for target in targets:
+            branch_arg = target if target in ("stable", "ptb", "canary", "dev", "auto") else "auto"
+            target_label = target.upper() if target == "all" else target.capitalize()
+            self.log_signal.emit(f"Injecting Vencord into Discord ({target_label})...")
+
+            # Match working script command: pnpm inject --branch <branch>
+            if pm == "pnpm":
+                inject_cmd = [pm_bin, "inject", "--branch", branch_arg]
+            elif pm:
+                inject_cmd = [pm_bin, "run", "inject", "--", "--branch", branch_arg]
+            elif os.path.isfile(direct_exe):
+                inject_cmd = [direct_exe, "-install", "-branch", branch_arg]
+            else:
+                self.log_signal.emit(f"Error: No package manager or installer binary found to inject {target_label}.")
+                overall_ok = False
+                results.append(f"{target_label}: Failed (no installer found)")
+                continue
+
+            self.log_signal.emit(f"Running '{' '.join(inject_cmd)}'...")
+
+            res = subprocess.run(
+                inject_cmd,
+                cwd=self.vencord_dir,
+                capture_output=True,
+                text=True,
+                shell=True,
+                env=os.environ.copy()
+            )
+
+            out_text = f"{res.stdout}\n{res.stderr}".strip()
+            if out_text:
+                for line in out_text.splitlines():
+                    if line.strip():
+                        self.log_signal.emit(f"  {line}")
+
+            if res.returncode != 0:
+                # If package manager inject failed and direct_exe exists, retry with direct binary
+                if os.path.isfile(direct_exe) and inject_cmd[0] != direct_exe:
+                    self.log_signal.emit(f"Retrying injection directly via {installer_name}...")
+                    direct_cmd = [direct_exe, "-install", "-branch", branch_arg]
+                    res_direct = subprocess.run(
+                        direct_cmd,
+                        cwd=self.vencord_dir,
+                        capture_output=True,
+                        text=True,
+                        shell=True,
+                        env=os.environ.copy()
+                    )
+                    direct_out = f"{res_direct.stdout}\n{res_direct.stderr}".strip()
+                    if direct_out:
+                        for line in direct_out.splitlines():
+                            if line.strip():
+                                self.log_signal.emit(f"  {line}")
+                    if res_direct.returncode == 0:
+                        results.append(f"{target_label}: Success")
+                        continue
+
+                overall_ok = False
+                results.append(f"{target_label}: Failed (code {res.returncode})")
+            else:
+                results.append(f"{target_label}: Success")
+
+        summary = "\n".join(results)
+        return overall_ok, summary
 
     def run(self):
         need_git = (self.mode == "setup" and not is_valid_vencord_source_dir(self.vencord_dir))
@@ -499,12 +708,11 @@ class VencordBuildWorker(QThread):
         self.log_signal.emit(f"Using Node.js runtime: {node_path}")
 
         build_cmd = [pm, "run", "build"]
-        inject_cmd = [pm, "run", "inject"]
 
         if self.mode == "setup":
             norm = os.path.normpath(os.path.abspath(self.vencord_dir)).lower()
             if "\\appdata\\roaming\\vencord" in norm or "\\appdata\\local\\vencord" in norm or not self.vencord_dir:
-                default_target = os.path.join(os.path.expanduser("~"), "Vencord")
+                default_target = os.path.join(os.path.expanduser("~"), "Documents", "Vencord")
                 self.log_signal.emit(
                     f"Notice: '{self.vencord_dir}' is Vencord's AppData configuration folder, not source code. "
                     f"Redirecting setup destination to '{default_target}'."
@@ -513,7 +721,7 @@ class VencordBuildWorker(QThread):
 
             if not is_valid_vencord_source_dir(self.vencord_dir):
                 if os.path.exists(self.vencord_dir) and os.listdir(self.vencord_dir):
-                    default_target = os.path.join(os.path.expanduser("~"), "Vencord")
+                    default_target = os.path.join(os.path.expanduser("~"), "Documents", "Vencord")
                     if os.path.abspath(self.vencord_dir) != os.path.abspath(default_target) and (not os.path.exists(default_target) or not os.listdir(default_target)):
                         self.log_signal.emit(f"Changing target to clean folder '{default_target}'...")
                         self.vencord_dir = default_target
@@ -554,13 +762,40 @@ class VencordBuildWorker(QThread):
                 self.finished_signal.emit(False, f"Vencord build failed: {res.stderr or res.stdout}")
                 return
 
-            self.log_signal.emit(f"Injecting Vencord into Discord ('{' '.join(inject_cmd)}')...")
-            res = subprocess.run(inject_cmd, cwd=self.vencord_dir, capture_output=True, text=True, shell=True, env=os.environ.copy())
-            if res.returncode != 0:
-                self.finished_signal.emit(False, f"Vencord inject failed: {res.stderr or res.stdout}")
+            inject_ok, inject_msg = self._execute_injection(pm)
+            if not inject_ok:
+                self.finished_signal.emit(False, f"Vencord built, but injection had issues:\n{inject_msg}")
                 return
 
-            self.finished_signal.emit(True, "Vencord setup, build, and inject completed successfully!")
+            self.finished_signal.emit(True, f"Vencord setup, build, and injection completed successfully!\n\n{inject_msg}")
+
+        elif self.mode == "inject":
+            if not is_valid_vencord_source_dir(self.vencord_dir):
+                self.finished_signal.emit(
+                    False,
+                    f"The directory '{self.vencord_dir}' is not a valid Vencord source repository.\n\n"
+                    "Please check your Vencord Source Dir in settings."
+                )
+                return
+
+            if not self._sync_plugin_files():
+                return
+
+            # Check if built (dist directory exists)
+            dist_dir = os.path.join(self.vencord_dir, "dist")
+            if not os.path.isdir(dist_dir) or not os.listdir(dist_dir):
+                self.log_signal.emit("Vencord is not built yet. Building first ('pnpm run build')...")
+                res = subprocess.run(build_cmd, cwd=self.vencord_dir, capture_output=True, text=True, shell=True, env=os.environ.copy())
+                if res.returncode != 0:
+                    self.finished_signal.emit(False, f"Build failed before injection: {res.stderr or res.stdout}")
+                    return
+
+            inject_ok, inject_msg = self._execute_injection(pm)
+            if not inject_ok:
+                self.finished_signal.emit(False, f"Vencord injection failed:\n{inject_msg}")
+                return
+
+            self.finished_signal.emit(True, f"Vencord injected successfully!\n\n{inject_msg}")
 
         elif self.mode == "build":
             if not is_valid_vencord_source_dir(self.vencord_dir):
@@ -569,7 +804,7 @@ class VencordBuildWorker(QThread):
                         False,
                         f"The selected folder '{self.vencord_dir}' is Vencord's AppData configuration folder, "
                         "not the Vencord source code repository.\n\n"
-                        "Please click '1-Click Full Setup' to clone and build Vencord from source into ~/Vencord."
+                        "Please click '1-Click Full Setup' to clone and build Vencord from source."
                     )
                     return
                 self.finished_signal.emit(

@@ -1307,12 +1307,217 @@ class UpdateSettingsDialog(QDialog):
         return p
 
 
+class DiscordClientSelectDialog(QDialog):
+    """Dialog allowing users to view detected Discord clients with real icons and select targets for injection."""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Select Discord Clients to Inject")
+        self.setFixedWidth(460)
+        self.setStyleSheet(f"""
+            QDialog {{ background: {BG_DARK.name()}; color: {TEXT_PRIMARY.name()}; }}
+            QLabel {{ color: {TEXT_PRIMARY.name()}; }}
+            QPushButton {{
+                background: {ACCENT_BLUE.name()};
+                color: white;
+                border: none;
+                border-radius: 4px;
+                padding: 6px 14px;
+                font-weight: 700;
+            }}
+            QPushButton:hover {{ background: #4752c4; }}
+            QPushButton:disabled {{ background: {BG_MID.name()}; color: {TEXT_MUTED.name()}; }}
+            QCheckBox {{
+                color: {TEXT_PRIMARY.name()};
+                font-weight: 600;
+                spacing: 8px;
+            }}
+        """)
+
+        layout = QVBoxLayout(self)
+        layout.setSpacing(12)
+        layout.setContentsMargins(16, 16, 16, 16)
+
+        header_lbl = QLabel("Choose which Discord desktop clients to inject Vencord into:")
+        header_lbl.setStyleSheet(f"color: {TEXT_PRIMARY.name()}; font-size: 13px; font-weight: bold;")
+        layout.addWidget(header_lbl)
+
+        clients_box = QVBoxLayout()
+        clients_box.setSpacing(8)
+
+        self._clients = vencord_helper.find_installed_discords()
+        self._checkbox_map: list[tuple[dict, QCheckBox]] = []
+
+        if self._clients:
+            for client in self._clients:
+                card = QFrame()
+                card.setStyleSheet(f"""
+                    QFrame {{
+                        background: {BG_CARD.name()};
+                        border: 1px solid {BORDER.name()};
+                        border-radius: 6px;
+                    }}
+                """)
+                card_layout = QHBoxLayout(card)
+                card_layout.setContentsMargins(10, 8, 10, 8)
+                card_layout.setSpacing(10)
+
+                chk = QCheckBox()
+                chk.setChecked(True)
+                card_layout.addWidget(chk)
+
+                # Icon
+                icon_lbl = QLabel()
+                icon_lbl.setFixedSize(36, 36)
+                icon_path = client.get("icon_path", "")
+                if icon_path and os.path.exists(icon_path):
+                    pix = QIcon(icon_path).pixmap(32, 32)
+                    if not pix.isNull():
+                        icon_lbl.setPixmap(pix)
+                        icon_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                card_layout.addWidget(icon_lbl)
+
+                # Details text
+                info_layout = QVBoxLayout()
+                info_layout.setSpacing(2)
+
+                name_lbl = QLabel(client.get("name", "Discord"))
+                name_lbl.setStyleSheet("font-weight: bold; font-size: 13px;")
+                info_layout.addWidget(name_lbl)
+
+                details = []
+                if client.get("version"):
+                    details.append(f"v{client['version']}")
+                if client.get("path"):
+                    details.append(client["path"])
+                sub_text = " • ".join(details)
+                sub_lbl = QLabel(sub_text)
+                sub_lbl.setStyleSheet(f"color: {TEXT_MUTED.name()}; font-size: 10px;")
+                sub_lbl.setWordWrap(True)
+                info_layout.addWidget(sub_lbl)
+
+                card_layout.addLayout(info_layout, 1)
+
+                # Status badge
+                is_patched = client.get("is_patched", False)
+                status_lbl = QLabel("✓ Injected" if is_patched else "Not Injected")
+                if is_patched:
+                    status_lbl.setStyleSheet(f"""
+                        color: {ACCENT_GREEN.name()};
+                        background: rgba(35, 165, 90, 0.15);
+                        border: 1px solid {ACCENT_GREEN.name()};
+                        border-radius: 10px;
+                        padding: 3px 8px;
+                        font-size: 11px;
+                        font-weight: bold;
+                    """)
+                else:
+                    status_lbl.setStyleSheet(f"""
+                        color: {TEXT_MUTED.name()};
+                        background: rgba(148, 155, 164, 0.12);
+                        border: 1px solid {BORDER.name()};
+                        border-radius: 10px;
+                        padding: 3px 8px;
+                        font-size: 11px;
+                    """)
+                card_layout.addWidget(status_lbl)
+
+                clients_box.addWidget(card)
+                self._checkbox_map.append((client, chk))
+        else:
+            no_clients_lbl = QLabel("No installed Discord installations were automatically detected in standard directories.")
+            no_clients_lbl.setStyleSheet(f"color: {TEXT_MUTED.name()}; font-style: italic;")
+            no_clients_lbl.setWordWrap(True)
+            clients_box.addWidget(no_clients_lbl)
+
+            auto_card = QFrame()
+            auto_card.setStyleSheet(f"""
+                QFrame {{
+                    background: {BG_CARD.name()};
+                    border: 1px solid {BORDER.name()};
+                    border-radius: 6px;
+                }}
+            """)
+            auto_layout = QHBoxLayout(auto_card)
+            auto_layout.setContentsMargins(10, 8, 10, 8)
+            auto_chk = QCheckBox("Auto-Detect Client (Vencord Installer Default)")
+            auto_chk.setChecked(True)
+            auto_layout.addWidget(auto_chk)
+            clients_box.addWidget(auto_card)
+            self._checkbox_map.append(({"id": "auto", "branch": "auto", "name": "Auto Detect"}, auto_chk))
+
+        layout.addLayout(clients_box)
+
+        action_bar = QHBoxLayout()
+        self.btn_toggle_all = QPushButton("ALL")
+        self.btn_toggle_all.setToolTip("Toggle all clients on/off")
+        self.btn_toggle_all.setStyleSheet(f"""
+            QPushButton {{
+                background: {BG_CARD.name()};
+                color: {TEXT_PRIMARY.name()};
+                border: 1px solid {BORDER.name()};
+                border-radius: 4px;
+                padding: 6px 12px;
+                font-weight: 700;
+            }}
+            QPushButton:hover {{
+                background: {BG_MID.name()};
+                border-color: {ACCENT_BLUE.name()};
+            }}
+        """)
+        self.btn_toggle_all.clicked.connect(self._toggle_all)
+        action_bar.addWidget(self.btn_toggle_all)
+        action_bar.addStretch()
+
+        self.btn_inject = QPushButton("Inject Selected")
+        self.btn_inject.clicked.connect(self._on_confirm)
+        action_bar.addWidget(self.btn_inject)
+
+        self.btn_cancel = QPushButton("Cancel")
+        self.btn_cancel.setStyleSheet(f"""
+            QPushButton {{
+                background: transparent;
+                color: {TEXT_MUTED.name()};
+                border: 1px solid {BORDER.name()};
+                border-radius: 4px;
+                padding: 6px 12px;
+            }}
+            QPushButton:hover {{
+                color: {TEXT_PRIMARY.name()};
+                background: {BG_CARD.name()};
+            }}
+        """)
+        self.btn_cancel.clicked.connect(self.reject)
+        action_bar.addWidget(self.btn_cancel)
+
+        layout.addLayout(action_bar)
+        self.adjustSize()
+
+    def _toggle_all(self):
+        any_unchecked = any(not chk.isChecked() for _, chk in self._checkbox_map)
+        for _, chk in self._checkbox_map:
+            chk.setChecked(any_unchecked)
+
+    def _on_confirm(self):
+        selected = self.get_selected_branches()
+        if not selected:
+            QMessageBox.warning(self, "Selection Required", "Please select at least one Discord client to inject.")
+            return
+        self.accept()
+
+    def get_selected_branches(self) -> list[str]:
+        branches = []
+        for client, chk in self._checkbox_map:
+            if chk.isChecked():
+                branches.append(client.get("branch", "auto"))
+        return branches
+
+
 class VencordManagerDialog(QDialog):
     def __init__(self, prefs: dict, parent=None):
         super().__init__(parent)
         self._prefs = prefs
         self.setWindowTitle("Vencord Manager")
-        self.setFixedWidth(480)
+        self.setFixedWidth(500)
         self.setStyleSheet(f"""
             QDialog {{ background: {BG_DARK.name()}; color: {TEXT_PRIMARY.name()}; }}
             QLabel {{ color: {TEXT_PRIMARY.name()}; }}
@@ -1369,6 +1574,10 @@ class VencordManagerDialog(QDialog):
         self.btn_build_vencord.clicked.connect(self._on_build_vencord)
         btn_box.addWidget(self.btn_build_vencord)
 
+        self.btn_inject_vencord = QPushButton("Inject into Discord...")
+        self.btn_inject_vencord.clicked.connect(self._on_inject_vencord)
+        btn_box.addWidget(self.btn_inject_vencord)
+
         self.btn_setup_vencord = QPushButton("1-Click Full Setup")
         self.btn_setup_vencord.clicked.connect(self._on_setup_vencord)
         btn_box.addWidget(self.btn_setup_vencord)
@@ -1394,6 +1603,7 @@ class VencordManagerDialog(QDialog):
 
     def _set_ui_busy(self, busy: bool):
         self.btn_build_vencord.setEnabled(not busy)
+        self.btn_inject_vencord.setEnabled(not busy)
         self.btn_setup_vencord.setEnabled(not busy)
         self.btn_browse_v.setEnabled(not busy)
         self.txt_vencord_dir.setEnabled(not busy)
@@ -1403,7 +1613,7 @@ class VencordManagerDialog(QDialog):
     def _show_console(self):
         if not self.vencord_log.isVisible():
             self.vencord_log.show()
-            self.resize(480, 380)
+            self.resize(500, 380)
 
     def _browse_vencord_dir(self):
         curr = self.txt_vencord_dir.text().strip() or os.path.expanduser("~")
@@ -1434,22 +1644,64 @@ class VencordManagerDialog(QDialog):
 
         self._start_build_worker(target_dir, "build")
 
+    def _on_inject_vencord(self):
+        target_dir = self.txt_vencord_dir.text().strip()
+        if not target_dir or not vencord_helper.is_valid_vencord_source_dir(target_dir):
+            found = vencord_helper.find_vencord_dir()
+            if found:
+                target_dir = found
+                self.txt_vencord_dir.setText(target_dir)
+
+        if not target_dir or not vencord_helper.is_valid_vencord_source_dir(target_dir):
+            QMessageBox.warning(
+                self,
+                "Vencord Source Directory Required",
+                "Please specify or select a valid Vencord source directory containing build scripts.\n\n"
+                "Tip: Click '1-Click Full Setup' to automatically clone and configure Vencord into ~/Vencord."
+            )
+            return
+
+        dlg = DiscordClientSelectDialog(self)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+
+        branches = dlg.get_selected_branches()
+        if not branches:
+            return
+
+        self._show_console()
+        self.vencord_log.appendPlainText(f"Injecting Vencord into {', '.join(branches)}...")
+        self._set_ui_busy(True)
+
+        self._start_build_worker(target_dir, "inject", inject_targets=branches)
+
     def _on_setup_vencord(self):
         target_dir = self.txt_vencord_dir.text().strip()
         if not target_dir or not vencord_helper.is_valid_vencord_source_dir(target_dir):
             if not target_dir or "appdata" in target_dir.lower():
-                target_dir = os.path.join(os.path.expanduser("~"), "Vencord")
+                target_dir = os.path.join(os.path.expanduser("~"), "Documents", "Vencord")
                 self.txt_vencord_dir.setText(target_dir)
+
+        dlg = DiscordClientSelectDialog(self)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+
+        branches = dlg.get_selected_branches()
+        if not branches:
+            return
 
         self._show_console()
         self.vencord_log.appendPlainText(f"Starting 1-Click Full Vencord Setup in '{target_dir}'...")
         self._set_ui_busy(True)
 
-        self._start_build_worker(target_dir, "setup")
+        self._start_build_worker(target_dir, "setup", inject_targets=branches)
 
-    def _start_build_worker(self, target_dir: str, mode: str):
+    def _start_build_worker(self, target_dir: str, mode: str, inject_targets: list[str] = None):
         self._build_worker = vencord_helper.VencordBuildWorker(
-            target_dir, mode=mode, installed_plugin_version=self._prefs.get("installed_plugin_version", "")
+            target_dir,
+            mode=mode,
+            installed_plugin_version=self._prefs.get("installed_plugin_version", ""),
+            inject_targets=inject_targets
         )
         self._build_worker.log_signal.connect(self.vencord_log.appendPlainText)
         self._build_worker.plugin_synced_signal.connect(lambda version: record_installed_plugin_version(self._prefs, version))
@@ -1460,9 +1712,9 @@ class VencordManagerDialog(QDialog):
         self._set_ui_busy(False)
         self.vencord_log.appendPlainText(f"\nStatus: {message}")
         if success:
-            QMessageBox.information(self, "Vencord Build Complete", f"{message}\n\nPlease restart Discord (Ctrl+R) to apply changes.")
+            QMessageBox.information(self, "Vencord Operation Complete", f"{message}\n\nPlease restart Discord (Ctrl+R) to apply changes.")
         else:
-            QMessageBox.critical(self, "Vencord Build Failed", message)
+            QMessageBox.critical(self, "Vencord Operation Failed", message)
 
     def accept(self):
         if self._build_worker and self._build_worker.isRunning():
