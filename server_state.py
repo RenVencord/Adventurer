@@ -20,6 +20,9 @@ _skipped_quest_ids: set[str] = set()
 _log: deque = deque(maxlen=500)
 _log_cursor: int = 0
 
+_loaded_plugin_version: str | None = None
+_pending_plugin_restart: str | None = None
+
 HEARTBEAT_MISS_LIMIT = 4
 
 _log_settings = {
@@ -111,6 +114,7 @@ def _get_or_create_user(user_id: str, username: str, avatar: str | None) -> tupl
             "known_ids": set(),
             "new_ids": set(),
             "quest_status": {},
+            "plugin_version": None,
         }
     else:
         _users[user_id]["username"] = username
@@ -159,10 +163,17 @@ def _get_quest_name(q: dict) -> str:
     return msg.get("questName") or msg.get("gameTitle") or q.get("id", "Unknown Quest")
 
 
-def set_quests(user_id: str, username: str, avatar: str | None, quests: list[dict]):
-    global _log_cursor
+def set_quests(user_id: str, username: str, avatar: str | None, quests: list[dict], plugin_version: str | None = None):
+    global _log_cursor, _loaded_plugin_version, _pending_plugin_restart
     with _lock:
+        if plugin_version:
+            _loaded_plugin_version = str(plugin_version).strip()
+            if _pending_plugin_restart and _pending_plugin_restart == _loaded_plugin_version:
+                _pending_plugin_restart = None
+
         u, is_new = _get_or_create_user(user_id, username, avatar)
+        if plugin_version:
+            u["plugin_version"] = str(plugin_version).strip()
 
         if is_new and _log_settings.get("accounts", False) and not getattr(threading.current_thread(), "_initial_load",
                                                                            False):
@@ -259,7 +270,8 @@ def get_users() -> dict[str, dict]:
                 "avatar": u["avatar"],
                 "last_heartbeat": u["last_heartbeat_time"],
                 "quest_count": len(u["quests"]),
-                "quest_ids": [q.get("id") for q in u["quests"] if isinstance(q, dict) and "id" in q]
+                "quest_ids": [q.get("id") for q in u["quests"] if isinstance(q, dict) and "id" in q],
+                "plugin_version": u.get("plugin_version")
             }
         return result
 
@@ -305,7 +317,33 @@ def get_state(user_id: str | None = None) -> dict:
             "last_heartbeat": u["last_heartbeat_time"] if u else None,
             "seen_first_heartbeat": u["seen_first"] if u else False,
             "new_quest_ids": set(u["new_ids"]) if u else set(),
+            "loaded_plugin_version": _loaded_plugin_version or (u.get("plugin_version") if u else None),
         }
+
+
+def get_loaded_plugin_version(user_id: str | None = None) -> str | None:
+    with _lock:
+        if user_id and user_id in _users:
+            ver = _users[user_id].get("plugin_version")
+            if ver:
+                return ver
+        if _loaded_plugin_version:
+            return _loaded_plugin_version
+        for u in _users.values():
+            if u.get("plugin_version"):
+                return u["plugin_version"]
+        return None
+
+
+def set_pending_plugin_restart(version: str | None):
+    global _pending_plugin_restart
+    with _lock:
+        _pending_plugin_restart = str(version).strip() if version else None
+
+
+def get_pending_plugin_restart() -> str | None:
+    with _lock:
+        return _pending_plugin_restart
 
 
 def mark_quest_assisted(quest_id: str | None):

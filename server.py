@@ -753,7 +753,8 @@ def heartbeat():
         for aq_id in assisted_from_plugin:
             server_state.mark_quest_assisted(aq_id)
 
-    server_state.set_quests(user_id, username, avatar, quests)
+    plugin_version = body.get("pluginVersion") or body.get("plugin_version")
+    server_state.set_quests(user_id, username, avatar, quests, plugin_version=plugin_version)
     log.info(f"Heartbeat from \033[96m{username} ({user_id})\033[0m: {len(quests)} quests")
 
     if server_state.should_log("heartbeats"):

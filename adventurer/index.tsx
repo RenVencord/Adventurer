@@ -55,6 +55,7 @@ function updateBar(patch: Partial<typeof _barState>) {
 }
 
 const LOGO_URL = "https://raw.githubusercontent.com/RenVencord/Adventurer/refs/heads/main/assets/logo.png";
+const PLUGIN_VERSION = "1.2.0";
 
 const ToastType = {
     get MESSAGE() {
@@ -909,7 +910,8 @@ async function sendHeartbeat(force = false) {
                 username: getCurrentUsername(),
                 avatar: getCurrentAvatarUrl(),
                 skippedQuests: getSkippedQuests(),
-                assistedQuestIds: Array.from(_assistedQuestIds)
+                assistedQuestIds: Array.from(_assistedQuestIds),
+                pluginVersion: PLUGIN_VERSION
             })
         });
 

@@ -1960,6 +1960,36 @@ class AboutDialog(QDialog):
         else:
             self._vencord_path = "Not configured"
 
+        self._downloaded_plugin_version = (
+            prefs.get("installed_plugin_version", "").strip() or updater.PLUGIN_VERSION
+        )
+        if updater.is_version_newer(self._downloaded_plugin_version, updater.PLUGIN_VERSION):
+            self._downloaded_plugin_version = updater.PLUGIN_VERSION
+
+        users = server_state.get_users()
+        selected_id = server_state.get_selected_user_id()
+        loaded_ver = server_state.get_loaded_plugin_version(selected_id)
+
+        # If a client is connected but reported no version (legacy build before version reporting was added),
+        # treat its loaded version as 1.1.0 (the previous release).
+        if not loaded_ver and users:
+            loaded_ver = "1.1.0"
+
+        pending_restart = server_state.get_pending_plugin_restart()
+        if pending_restart and not loaded_ver:
+            loaded_ver = "1.1.0"
+
+        self._loaded_plugin_version = loaded_ver
+        self._needs_plugin_restart = False
+
+        if self._loaded_plugin_version and self._downloaded_plugin_version:
+            if self._loaded_plugin_version != self._downloaded_plugin_version:
+                self._needs_plugin_restart = True
+        elif pending_restart and pending_restart == self._downloaded_plugin_version:
+            self._needs_plugin_restart = True
+            if not self._loaded_plugin_version:
+                self._loaded_plugin_version = "1.1.0"
+
         self._setup_ui()
 
     def _setup_ui(self):
@@ -2007,6 +2037,24 @@ class AboutDialog(QDialog):
         )
         text_col.addWidget(build_lbl)
 
+        # 3. Plugin version (or Loaded / Downloaded if update downloaded and Discord restart needed)
+        plugin_lbl = QLabel()
+        plugin_lbl.setTextFormat(Qt.TextFormat.RichText)
+        if self._needs_plugin_restart:
+            plugin_lbl.setText(
+                f"<span style='color: {TEXT_MUTED.name()}; font-size: 12px;'>Loaded plugin version:</span> "
+                f"<span style='color: {TEXT_PRIMARY.name()}; font-size: 12px;'>{self._loaded_plugin_version}</span><br>"
+                f"<span style='color: {TEXT_MUTED.name()}; font-size: 12px;'>Downloaded plugin version:</span> "
+                f"<span style='color: {ACCENT_GREEN.name()}; font-size: 12px; font-weight: 600;'>{self._downloaded_plugin_version}</span> "
+                f"<span style='color: {ACCENT_GOLD.name()}; font-size: 11px; font-weight: 600;'>(restart Discord)</span>"
+            )
+        else:
+            plugin_lbl.setText(
+                f"<span style='color: {TEXT_MUTED.name()}; font-size: 12px;'>Plugin version:</span> "
+                f"<span style='color: {TEXT_PRIMARY.name()}; font-size: 12px;'>{self._downloaded_plugin_version}</span>"
+            )
+        text_col.addWidget(plugin_lbl)
+
         def wrap_chars(text: str) -> str:
             if not text:
                 return ""
@@ -2024,7 +2072,7 @@ class AboutDialog(QDialog):
                     parts.append(ch)
             return "\u200b".join(parts)
 
-        # 3. Adventurer settings path (wrap text by character)
+        # 4. Adventurer settings path (wrap text by character)
         settings_lbl = QLabel()
         settings_lbl.setWordWrap(True)
         settings_lbl.setTextFormat(Qt.TextFormat.RichText)
@@ -2034,7 +2082,7 @@ class AboutDialog(QDialog):
         )
         text_col.addWidget(settings_lbl)
 
-        # 4. Vencord path (wrap text by character)
+        # 5. Vencord path (wrap text by character)
         vencord_lbl = QLabel()
         vencord_lbl.setWordWrap(True)
         vencord_lbl.setTextFormat(Qt.TextFormat.RichText)
@@ -2045,7 +2093,7 @@ class AboutDialog(QDialog):
         )
         text_col.addWidget(vencord_lbl)
 
-        # 5. Copyright RenVencord
+        # 6. Copyright
         copyright_lbl = QLabel("© RenVencord")
         copyright_lbl.setStyleSheet(f"color: {TEXT_MUTED.name()}; font-size: 11px;")
         text_col.addWidget(copyright_lbl)
@@ -2099,9 +2147,18 @@ class AboutDialog(QDialog):
         root_layout.addLayout(btn_layout)
 
     def _on_copy(self):
+        if self._needs_plugin_restart:
+            plugin_info = (
+                f"Loaded plugin version: {self._loaded_plugin_version}\n"
+                f"Downloaded plugin version: {self._downloaded_plugin_version} (restart Discord)"
+            )
+        else:
+            plugin_info = f"Plugin version: {self._downloaded_plugin_version}"
+
         info = (
             f"Adventurer {self._version}\n"
             f"Build date: {self._build_date}\n"
+            f"{plugin_info}\n"
             f"Settings path: {self._settings_path}\n"
             f"Vencord path: {self._vencord_path}\n"
             f"© RenVencord"
@@ -2721,6 +2778,7 @@ class MainWindow(QMainWindow):
 
             def on_build_finished(success, msg):
                 if success:
+                    server_state.set_pending_plugin_restart(version)
                     QMessageBox.information(
                         self,
                         "Plugin Updated & Vencord Rebuilt",
