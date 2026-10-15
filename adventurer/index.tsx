@@ -2,7 +2,7 @@ import { definePluginSettings } from "@api/Settings";
 import definePlugin, { OptionType, PluginNative } from "@utils/types";
 import { FluxDispatcher, UserStore, React, RestAPI } from "@webpack/common";
 import { findStoreLazy, findByProps } from "@webpack";
-import { Toasts, Button } from "@webpack/common";
+import { Button, showToast } from "@webpack/common";
 import { showNotification } from "@api/Notifications";
 
 import { buildCompletionMessage, buildCompletionScript, type CompletionQuestStatus } from "./experiences/completion";
@@ -58,55 +58,35 @@ const LOGO_URL = "https://raw.githubusercontent.com/RenVencord/Adventurer/refs/h
 const PLUGIN_VERSION = "1.2.0";
 
 const ToastType = {
-    get MESSAGE() {
-        return (Toasts as any)?.Type?.MESSAGE ?? (Toasts as any)?.ToastType?.MESSAGE ?? (Toasts as any)?.ToastType?.NORMAL ?? 0;
-    },
-    get SUCCESS() {
-        return (Toasts as any)?.Type?.SUCCESS ?? (Toasts as any)?.ToastType?.SUCCESS ?? 1;
-    },
-    get FAILURE() {
-        return (Toasts as any)?.Type?.FAILURE ?? (Toasts as any)?.Type?.ERROR ?? (Toasts as any)?.ToastType?.FAILURE ?? (Toasts as any)?.ToastType?.ERROR ?? 2;
-    },
-    get CUSTOM() {
-        return (Toasts as any)?.Type?.CUSTOM ?? (Toasts as any)?.ToastType?.CUSTOM ?? 3;
-    }
-};
+    MESSAGE: 0,
+    SUCCESS: 1,
+    FAILURE: 2,
+    CUSTOM: 3
+} as const;
 
 let _toastIdCounter = 0;
 function toastGenId(): string {
-    try {
-        if (typeof (Toasts as any)?.genId === "function") {
-            return (Toasts as any).genId();
-        }
-    } catch { }
     return `adventurer-${Date.now()}-${++_toastIdCounter}`;
 }
 
-try {
-    if (typeof Toasts !== "undefined" && Toasts) {
-        if (!(Toasts as any).Type) {
-            (Toasts as any).Type = ToastType;
-        }
-        if (!(Toasts as any).genId) {
-            (Toasts as any).genId = toastGenId;
-        }
-    }
-} catch { }
-
 function showToastSafe(props: { message: string; type?: any; id?: string; options?: any }) {
-    const id = props.id ?? toastGenId();
-    const type = props.type ?? ToastType.MESSAGE;
     try {
-        if (typeof (Toasts as any)?.show === "function") {
-            (Toasts as any).show({
-                ...props,
-                id,
-                type
+        let variant: "success" | "critical" | undefined;
+        if (props.type === ToastType.SUCCESS || props.type === "success" || props.type === 1) {
+            variant = "success";
+        } else if (props.type === ToastType.FAILURE || props.type === "critical" || props.type === 2) {
+            variant = "critical";
+        }
+
+        if (typeof showToast === "function") {
+            showToast({
+                text: props.message,
+                ...(variant ? { variant } : {})
             });
             return;
         }
     } catch (e) {
-        console.warn("[Adventurer] Toasts.show failed:", e);
+        console.warn("[Adventurer] showToast failed:", e);
     }
 
     try {
