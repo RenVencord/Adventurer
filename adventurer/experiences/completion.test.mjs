@@ -671,7 +671,7 @@ test("a local recipe overrides the bundled one for the same application and scen
     assert.equal(s.recipe.origin, "local");
     assert.equal(s.recipe.source, "edited");
     assert.deepEqual(s.recipe.triggers, ["select:play"]);
-    assert.deepEqual(s.recipes, { local: 1, bundled: 1, forApp: 2 });
+    assert.deepEqual(s.recipes, { local: 1, bundled: BUNDLED.length, forApp: 2 });
     // shot:fire belongs to the bundled recipe only, so it does nothing now
     g.shoot();
     env.clock.tick(0);
@@ -694,7 +694,7 @@ test("the newest local profile wins and profiles without completion or for anoth
     });
     const s = env.status();
     assert.equal(s.recipe.name, "newest");
-    assert.deepEqual(s.recipes, { local: 3, bundled: 1, forApp: 3 });
+    assert.deepEqual(s.recipes, { local: 3, bundled: BUNDLED.length, forApp: 3 });
     g.play();
     env.clock.tick(0);
     assert.deepEqual(j(g.runArgs), [{ total: 1 }]);
@@ -1700,4 +1700,60 @@ test("index.tsx injects the event graph once, whenever the overlay or the comple
     const guard = body.slice(body.lastIndexOf("if (", graphAt), graphAt);
     assert.match(guard, /settings\.store\.experiencesHack\s*\|\|\s*settings\.store\.experiencesAutoComplete/);
     assert.match(body.slice(body.lastIndexOf("if (", overlayAt), overlayAt), /^if \(settings\.store\.experiencesHack\)/);
+});
+
+test("entity name resolution in decodeArg and entity scope", () => {
+    const g = makeGame();
+    // director entity has name "director", no guid passed
+    const env = load(g, {
+        local: [profile(recipe({
+            entries: [{ name: "director:go", scope: "entity", entity: "Shot Director", args: ["@entity:Shot Director"] }]
+        }))]
+    });
+    g.play();
+    env.clock.tick(0);
+    assert.equal(g.entityCalls.length, 1);
+    assert.equal(g.entityCalls[0].name, "Shot Director");
+});
+
+test("recipe repeat_for expands entries across all matching enabled entities", () => {
+    const g = makeGame();
+    const calls = [];
+    const e1 = new Entity("Collectable_Sticker_1", "guid1");
+    const e2 = new Entity("Collectable_Sticker_2", "guid2");
+    g.app.root.children.push(e1, e2);
+    g.app.on("inspect:item", target => calls.push(target ? target.name : null));
+
+    const env = load(g, {
+        local: [profile(recipe({
+            repeat_for: "Collectable_Sticker_*",
+            entries: [{ name: "inspect:item", scope: "app", args: ["@entity"] }]
+        }))]
+    });
+    g.play();
+    env.clock.tick(0);
+    assert.deepEqual(calls, ["Collectable_Sticker_1", "Collectable_Sticker_2"]);
+});
+
+test("paced execution with delay_ms respects timeouts between entries", () => {
+    const g = makeGame();
+    const timeline = [];
+    g.app.on("step:one", () => timeline.push("one"));
+    g.app.on("step:two", () => timeline.push("two"));
+
+    const env = load(g, {
+        local: [profile(recipe({
+            entries: [
+                { name: "step:one", scope: "app", delay_ms: 100 },
+                { name: "step:two", scope: "app", delay_ms: 0 }
+            ]
+        }))]
+    });
+    g.play();
+    env.clock.tick(0);
+    assert.deepEqual(timeline, ["one"]);
+    env.clock.tick(50);
+    assert.deepEqual(timeline, ["one"]);
+    env.clock.tick(50);
+    assert.deepEqual(timeline, ["one", "two"]);
 });

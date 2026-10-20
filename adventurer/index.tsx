@@ -1208,57 +1208,98 @@ function buildOverlayScript(): string {
         [0, 4], [1, 5], [2, 6], [3, 7]
     ];
 
-    function getHalfExtents(entity) {
-        const c = entity.collision;
-        if (c) {
-            if (c.type === "box" && c.halfExtents) return c.halfExtents;
-            if (c.type === "sphere" && c.radius) return new pc.Vec3(c.radius, c.radius, c.radius);
-            if (c.type === "capsule") {
-                const r = c.radius || 0.5, h = (c.height || 2) / 2;
-                return new pc.Vec3(r, h, r);
+    function getBoundingBox(entity) {
+        if (!entity) return null;
+        let aabb = null;
+        const stack = [entity];
+        while (stack.length) {
+            const cur = stack.pop();
+            const comp = cur.render || cur.model;
+            if (comp && comp.meshInstances) {
+                for (let j = 0; j < comp.meshInstances.length; j++) {
+                    const mi = comp.meshInstances[j];
+                    if (mi && mi.aabb) {
+                        if (!aabb) aabb = mi.aabb.clone();
+                        else aabb.add(mi.aabb);
+                    }
+                }
+            }
+            const ch = cur.children || [];
+            for (let i = 0; i < ch.length; i++) stack.push(ch[i]);
+        }
+
+        const isSticker = /sticker/i.test(entity.name || "") || (entity.parent && /sticker/i.test(entity.parent.name || ""));
+
+        if (aabb) {
+            const he = aabb.halfExtents;
+            let hx = he.x * 1.04;
+            let hy = he.y * 1.04;
+            let hz = he.z * 1.04;
+            if (isSticker) {
+                // Stickers are flat 2D decal quads with he.y near 0. Give them a clean, visible
+                // 3D box thickness (5cm) so they don't clip into the surface or display flat.
+                hx = Math.max(he.x * 1.08, 0.04);
+                hy = Math.max(he.y * 1.08, 0.025);
+                hz = Math.max(he.z * 1.08, 0.04);
+            } else {
+                hx = Math.max(hx, 0.01);
+                hy = Math.max(hy, 0.01);
+                hz = Math.max(hz, 0.01);
+            }
+            const c = aabb.center;
+            return SIGNS.map(s => new pc.Vec3(c.x + s[0] * hx, c.y + s[1] * hy, c.z + s[2] * hz));
+        }
+
+        const pos = entity.getPosition();
+        const ls = entity.getLocalScale ? entity.getLocalScale() : { x: 1, y: 1, z: 1 };
+        const sx = Math.abs(ls.x) || 1, sy = Math.abs(ls.y) || 1, sz = Math.abs(ls.z) || 1;
+        let rx = 0.05, ry = 0.05, rz = 0.05;
+        const col = entity.collision;
+        if (col) {
+            if (col.type === "box" && col.halfExtents) {
+                rx = Math.max(col.halfExtents.x * sx * 1.04, 0.02);
+                ry = Math.max(col.halfExtents.y * sy * 1.04, 0.02);
+                rz = Math.max(col.halfExtents.z * sz * 1.04, 0.02);
+            } else if (col.radius) {
+                const r = col.radius * Math.max(sx, sy, sz) * 1.04;
+                rx = ry = rz = Math.max(r, isSticker ? 0.05 : 0.02);
             }
         }
-        const renderComp = entity.render || entity.model;
-        if (renderComp && renderComp.meshInstances && renderComp.meshInstances.length) {
-            const aabb = renderComp.meshInstances[0].aabb.clone();
-            for (let i = 1; i < renderComp.meshInstances.length; i++) aabb.add(renderComp.meshInstances[i].aabb);
-            const s = entity.getLocalScale();
-            return new pc.Vec3(
-                aabb.halfExtents.x / Math.max(Math.abs(s.x), 0.0001),
-                aabb.halfExtents.y / Math.max(Math.abs(s.y), 0.0001),
-                aabb.halfExtents.z / Math.max(Math.abs(s.z), 0.0001)
-            );
-        }
-        return new pc.Vec3(0.3, 0.3, 0.3);
+        return SIGNS.map(s => new pc.Vec3(pos.x + s[0] * rx, pos.y + s[1] * ry, pos.z + s[2] * rz));
     }
 
     function drawBox(entity, color) {
-        const halfExtents = getHalfExtents(entity);
-        const transform = entity.getWorldTransform();
-        const corners = SIGNS.map(s => {
-            const p = new pc.Vec3(s[0] * halfExtents.x, s[1] * halfExtents.y, s[2] * halfExtents.z);
-            transform.transformPoint(p, p);
-            return p;
-        });
+        if (!entity || entity.enabled === false) return;
+        const corners = getBoundingBox(entity);
+        if (!corners) return;
         EDGES.forEach(([a, b]) => app.drawLine(corners[a], corners[b], color, !SEE_THROUGH_WALLS));
     }
 
     const PUZZLE_SCRIPTS = [
-        "collectable", "useItem", "focusItem", "focusItemTakeable", "focusItemUsable",
+        "collectable", "collectible", "inspectionObject", "sendEventOnClickCollider",
+        "changeCursorOnEvent", "useItem", "focusItem", "focusItemTakeable", "focusItemUsable",
         "focusItemNestable", "pushButton", "keypad", "slider", "snappingSlider",
         "snappingDial", "toggleSwitch", "door", "itemManipulator"
     ];
 
     function isPuzzleRelevant(entity) {
-        if (entity.tags.has("blocker")) return false;
+        if (!entity || entity.enabled === false) return false;
+        if (entity.tags && typeof entity.tags.has === "function" && entity.tags.has("blocker")) return false;
+        // Don't draw ESP boxes on camera navigation hotspots
+        if (entity.script && entity.script.hotspot) return false;
+        const name = (entity.name || "").toLowerCase();
+        if (/^hotspot/i.test(name) || (entity.parent && /^hotspot/i.test(entity.parent.name || ""))) return false;
+        if (/collect|sticker|crystal|pickup|inspect/i.test(name)) return true;
         if (!entity.script) return false;
         return PUZZLE_SCRIPTS.some(name => !!entity.script[name]);
     }
 
     function getInteractables() {
-        const candidates = app.root.findByTag("interactable").length
-            ? app.root.findByTag("interactable")
-            : app.root.findComponents("collision").map(c => c.entity);
+        const byTag = (app.root.findByTag && app.root.findByTag("interactable")) || [];
+        const withCollision = (app.root.findComponents && app.root.findComponents("collision") || []).map(c => c.entity);
+        const candidateSet = new Set(byTag);
+        withCollision.forEach(e => candidateSet.add(e));
+        const candidates = Array.from(candidateSet);
 
         let questKeywords = ["quest", "badge", "unlocked", "complete", "taken"];
         const uiElements = app.root.findComponents("element");
@@ -1293,10 +1334,15 @@ function buildOverlayScript(): string {
 
         relevantCandidates.forEach(entity => {
             if (!entity.script) {
-                entity.isHighSignal = false;
+                entity.isHighSignal = /collect|sticker|crystal|pickup/i.test(entity.name || "");
+                if (entity.isHighSignal) highSignalCount++;
                 return;
             }
             let matchesActiveQuestScope = false;
+            if (/collect|sticker|crystal|pickup/i.test(entity.name || "") ||
+                entity.script.inspectionObject || entity.script.collectable || entity.script.collectible) {
+                matchesActiveQuestScope = true;
+            }
             for (const sName in entity.script) {
                 if (sName.startsWith("_")) continue;
                 const instance = entity.script[sName];
@@ -1432,6 +1478,28 @@ function buildOverlayScript(): string {
                     hovered = null;
                 }
             } catch (e) {}
+        } else {
+            const cam = app.root.findOne(e => e.camera && e.enabled);
+            if (cam && cam.camera && typeof cam.camera.worldToScreen === "function") {
+                const candidates = getInteractables();
+                let closest = null, minDist = Infinity;
+                for (let i = 0; i < candidates.length; i++) {
+                    const ent = candidates[i];
+                    if (!ent || ent.enabled === false) continue;
+                    try {
+                        const sp = cam.camera.worldToScreen(ent.getPosition());
+                        if (sp && sp.z > 0) {
+                            const dx = sp.x - mouseX, dy = sp.y - mouseY;
+                            const dist = Math.sqrt(dx * dx + dy * dy);
+                            if (dist < 45 && dist < minDist) {
+                                minDist = dist;
+                                closest = ent;
+                            }
+                        }
+                    } catch (err) {}
+                }
+                hovered = closest;
+            }
         }
 
         getInteractables().forEach(entity => {

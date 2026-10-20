@@ -43,5 +43,26 @@
             "notes": "quest:completed is fired by discordQuestManager.onCansCollected, reached from endlessRunner:game:itemsCollected via discordQuestManager.onCansCollected. Entries are in goal-upward order (closest to the goal first); no guard with a known writer was found, so no entry is preferred.",
             "source": "guessed"
         }
+    },
+    {
+        "application_id": "1550073301500567582",
+        "scene": "Sandbox",
+        "name": "Gaming for Cause",
+        "completion": {
+            "version": 1,
+            "goal": "quest-completed",
+            "triggers": ["inspect:item", "button:sticker:take"],
+            "entries": [
+                { "name": "inspect:item", "scope": "app", "args": ["@entity:this"], "source": "recorded" },
+                { "name": "button:sticker:take", "scope": "app", "args": [], "source": "recorded" },
+                { "name": "button:sticker:complete", "scope": "app", "args": [], "source": "recorded" }
+            ],
+            "suppress": ["leaderboard"],
+            "delay_ms": 0,
+            "entry_delay_ms": 1000,
+            "repeat_for": "Collectable_Sticker_*",
+            "notes": "Collects all 5 stickers sequentially with pacing to avoid SDK throttling.",
+            "source": "recorded"
+        }
     }
 ]

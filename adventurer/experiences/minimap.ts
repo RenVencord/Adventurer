@@ -348,14 +348,63 @@ if (globalThis.__ADVENTURER_TEST__) {
     };
 }
 
+function findNodes(root, predicate) {
+    var result = [];
+    var stack = [root];
+    while (stack.length) {
+        var node = stack.pop();
+        if (!node) continue;
+        try { if (predicate(node)) result.push(node); } catch (_) {}
+        var ch = node.children;
+        if (ch) { for (var i = ch.length - 1; i >= 0; i--) stack.push(ch[i]); }
+    }
+    return result;
+}
+
 function findManager(app) {
-    var found = app.root.find(function (e) {
+    var found = findNodes(app.root, function (e) {
         return e.script && e.script.cameraPoiManager;
     });
-    if (!found || !found.length) return null;
-    var mgr = found[0].script.cameraPoiManager;
-    if (!mgr || !mgr.pois || !mgr.pois.length) return null;
-    return mgr;
+    if (found && found.length && found[0].script && found[0].script.cameraPoiManager) {
+        var mgr = found[0].script.cameraPoiManager;
+        if (mgr.pois && mgr.pois.length) return mgr;
+    }
+    var hotspotEvents = [];
+    if (app && app._callbacks) {
+        if (typeof app._callbacks.forEach === "function") {
+            app._callbacks.forEach(function (v, k) {
+                if (typeof k === "string" && k.indexOf("hotspot:") === 0) hotspotEvents.push(k);
+            });
+        } else if (typeof app._callbacks.keys === "function") {
+            Array.from(app._callbacks.keys()).forEach(function (k) {
+                if (typeof k === "string" && k.indexOf("hotspot:") === 0) hotspotEvents.push(k);
+            });
+        } else {
+            Object.keys(app._callbacks).forEach(function (k) {
+                if (k.indexOf("hotspot:") === 0) hotspotEvents.push(k);
+            });
+        }
+    }
+    var hotspotPois = findNodes(app.root, function (e) {
+        return /^hotspot_[a-z0-9]/i.test(e.name || "") && (!e.parent || !/^hotspot_[a-z0-9]/i.test(e.parent.name || ""));
+    });
+    if (!hotspotPois || !hotspotPois.length) {
+        hotspotPois = findNodes(app.root, function (e) {
+            return /^(gizmo|hotspot)/i.test(e.name || "");
+        });
+    }
+    if ((hotspotEvents.length > 0 || (hotspotPois && hotspotPois.length >= 2))) {
+        var camEnt = findNodes(app.root, function (e) {
+            return (e.camera && e.enabled) || (e.script && e.script.cameraController);
+        })[0] || null;
+        return {
+            isHotspot: true,
+            pois: hotspotPois,
+            hotspotEvents: hotspotEvents,
+            cameraEntity: camEnt
+        };
+    }
+    return null;
 }
 
 var bootTries = 0;
@@ -441,12 +490,17 @@ function start(app, manager) {
         var out = [];
         var seen = new Set();
         function add(e) {
-            if (e && !seen.has(e) && e.script && e.script.cameraPoi) { seen.add(e); out.push(e); }
+            if (e && !seen.has(e)) {
+                if (manager.isHotspot || (e.script && e.script.cameraPoi)) {
+                    seen.add(e);
+                    out.push(e);
+                }
+            }
         }
         var src = manager.pois;
         if (src && src.length) for (var i = 0; i < src.length; i++) add(src[i]);
         if (!out.length) {
-            var all = app.root.find(function (e) { return e.script && e.script.cameraPoi; });
+            var all = findNodes(app.root, function (e) { return e.script && e.script.cameraPoi; });
             for (var j = 0; j < all.length; j++) add(all[j]);
         }
         return out;
@@ -468,14 +522,22 @@ function start(app, manager) {
         st.entKey = new Map();
         for (var i = 0; i < ents.length; i++) {
             var ent = ents[i];
-            var cp = ent.script.cameraPoi;
-            var base = readId(cp, ent);
+            var cp = (ent.script && ent.script.cameraPoi) || null;
+            var base = cp ? readId(cp, ent) : ent.name;
             var key = base;
             var n = 1;
             while (used[key]) { n++; key = base + "#" + n; }
             used[key] = true;
-            var tgt = cp.camTargetEntity || (cp.camera && cp.camera.camTargetEntity) || ent;
-            var look = cp.camLookAtEntity || (cp.camera && cp.camera.camLookAtEntity) || null;
+            var tgt = null;
+            var look = null;
+            if (cp) {
+                tgt = cp.camTargetEntity || (cp.camera && cp.camera.camTargetEntity) || ent;
+                look = cp.camLookAtEntity || (cp.camera && cp.camera.camLookAtEntity) || null;
+            } else if (manager.isHotspot) {
+                tgt = (ent.children || []).find(function (c) { return /^camera_/i.test(c.name || ""); }) || ent;
+            } else {
+                tgt = ent;
+            }
             var p = tgt.getPosition();
             var yaw = null;
             if (look) {
@@ -511,7 +573,7 @@ function start(app, manager) {
 
     function findFocusEnt() {
         try {
-            var f = app.root.find(function (e) { return e.script && e.script.focusItemManager; });
+            var f = findNodes(app.root, function (e) { return e.script && e.script.focusItemManager; });
             st.focusEnt = f && f.length ? f[0] : null;
         } catch (err) {
             st.focusEnt = null;
@@ -533,6 +595,18 @@ function start(app, manager) {
         for (var i = 0; i < st.pois.length; i++) {
             var rec = st.pois[i];
             var cp = rec.cp;
+            if (manager.isHotspot || !cp) {
+                rec.enabled = true;
+                rec.useBack = true;
+                var allOther = [];
+                for (var oi = 0; oi < st.pois.length; oi++) {
+                    if (st.pois[oi].key !== rec.key) allOther.push(st.pois[oi].key);
+                }
+                rec.out = allOther;
+                nodes[rec.key] = { enabled: true, useBack: true, out: allOther };
+                bits.push(rec.key + "+b>" + allOther.join(","));
+                continue;
+            }
             var en = cp.poiEnabled;
             if (en === undefined && cp.core) en = cp.core.poiEnabled;
             rec.enabled = en !== false;
@@ -558,6 +632,30 @@ function start(app, manager) {
         var cpoi = manager.currentPoi;
         if (ent) cur = st.entKey.get(ent);
         if ((cur === undefined || cur === null) && cpoi) cur = keyOfItem(cpoi);
+        if (manager.isHotspot && (cur === undefined || cur === null) && st.pois.length > 0) {
+            for (var hi = 0; hi < st.pois.length; hi++) {
+                var he = st.pois[hi].ent;
+                var gizmo = (he.children || []).find(function (c) { return /gizmo/i.test(c.name || ""); });
+                if (he.enabled === false || (gizmo && gizmo.enabled === false)) {
+                    cur = st.pois[hi].key;
+                    break;
+                }
+            }
+            if (!cur && manager.cameraEntity && typeof manager.cameraEntity.getPosition === "function") {
+                var cpPos = manager.cameraEntity.getPosition();
+                var bestDist = Infinity;
+                for (var ci = 0; ci < st.pois.length; ci++) {
+                    var cdx = st.pois[ci].x - cpPos.x;
+                    var cdz = st.pois[ci].z - cpPos.z;
+                    var d2 = cdx * cdx + cdz * cdz;
+                    if (d2 < bestDist) {
+                        bestDist = d2;
+                        cur = st.pois[ci].key;
+                    }
+                }
+            }
+            if (!cur) cur = st.cur || st.pois[0].key;
+        }
         if (cur === undefined) cur = null;
         var stack = [];
         var raw = manager.poiStack;
@@ -1195,8 +1293,28 @@ function start(app, manager) {
         j.completed = false;
         j.firing = true;
         try {
-            if (step.kind === "forward") st.byKey[step.id].ent.fire("interactable:mouseUp");
-            else app.fire("cameraPoi:backButtonClicked");
+            if (manager.isHotspot) {
+                var targetEnt = st.byKey[step.id].ent;
+                var targetGizmo = targetEnt && (targetEnt.children || []).find(function (c) { return /gizmo/i.test(c.name || ""); }) || targetEnt;
+                if (targetGizmo) {
+                    try { targetGizmo.fire("interactable:mouseUp", targetGizmo); } catch (e) {}
+                    try { targetGizmo.fire("interactable:mouseDown", targetGizmo); } catch (e) {}
+                }
+                var letterMatch = targetEnt && targetEnt.name ? targetEnt.name.match(/_([a-z0-9])$/i) : null;
+                var targetEvent = letterMatch ? "hotspot:" + letterMatch[1].toLowerCase() : null;
+                if (!targetEvent && manager.hotspotEvents && manager.hotspotEvents.length) {
+                    targetEvent = manager.hotspotEvents.find(function(ev) {
+                        return ev.toLowerCase().indexOf(step.id.toLowerCase()) >= 0;
+                    }) || manager.hotspotEvents[j.i];
+                }
+                if (targetEvent) {
+                    app.fire(targetEvent, targetGizmo);
+                }
+                j.hopSeen = true;
+            } else {
+                if (step.kind === "forward") st.byKey[step.id].ent.fire("interactable:mouseUp");
+                else app.fire("cameraPoi:backButtonClicked");
+            }
         } catch (err) {
             j.firing = false;
             j.awaiting = false;
@@ -1224,8 +1342,21 @@ function start(app, manager) {
         else abortJob("the camera was moved by something else");
     }
 
-    function onMoveComplete() {
+    function onMoveComplete(data) {
         st.dirty = true;
+        if (manager.isHotspot && data && data.targetPosition) {
+            var tp = data.targetPosition;
+            var tx = tp.x !== undefined ? tp.x : tp[0];
+            var tz = tp.z !== undefined ? tp.z : tp[2];
+            var bestDist = Infinity, bestKey = null;
+            for (var pi = 0; pi < st.pois.length; pi++) {
+                var pEnt = st.pois[pi];
+                var dx = pEnt.x - tx, dz = pEnt.z - tz;
+                var d2 = dx * dx + dz * dz;
+                if (d2 < bestDist) { bestDist = d2; bestKey = pEnt.key; }
+            }
+            if (bestKey) st.cur = bestKey;
+        }
         var j = job;
         if (!j || !j.awaiting || !j.hopSeen) return;
         j.awaiting = false;

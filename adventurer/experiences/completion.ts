@@ -117,6 +117,8 @@ export interface CompletionEntry {
     entity?: string | null;
     guid?: string | null;
     args?: unknown[];
+    delay_ms?: number;
+    repeat_for?: string;
     source?: string;
 }
 
@@ -127,6 +129,8 @@ export interface CompletionRecipe {
     entries: CompletionEntry[];
     suppress?: string[];
     delay_ms?: number;
+    entry_delay_ms?: number;
+    repeat_for?: string;
     notes?: string;
     source?: "recorded" | "guessed" | "edited" | "bundled";
 }
@@ -306,14 +310,18 @@ function normalizeEntry(e) {
     if (scope !== "app" && scope !== "entity") return { reason: "entry " + e.name + " has unknown scope " + String(scope) };
     var entity = typeof e.entity === "string" ? e.entity : "";
     var guid = typeof e.guid === "string" ? e.guid : "";
-    if (scope === "entity" && !entity && !guid) return { reason: "entity entry " + e.name + " has no entity name or guid" };
+    var repeatFor = typeof e.repeat_for === "string" ? e.repeat_for.trim() : "";
+    if (scope === "entity" && !entity && !guid && !repeatFor) return { reason: "entity entry " + e.name + " has no entity name, guid or repeat_for" };
     var args = e.args === undefined || e.args === null ? [] : e.args;
     if (!Array.isArray(args)) return { reason: "entry " + e.name + " args is not a list" };
+    var delay = Number(e.delay_ms);
+    var delayMs = isFinite(delay) && delay > 0 ? Math.min(delay, MAX_DELAY_MS) : 0;
     return {
         entry: {
             name: e.name, scope: scope, entity: entity, guid: guid, args: args,
+            delayMs: delayMs, repeatFor: repeatFor,
             source: typeof e.source === "string" ? e.source : "",
-            needsIndex: scope === "entity" || hasEntityRef(args, 0)
+            needsIndex: scope === "entity" || hasEntityRef(args, 0) || !!repeatFor
         }
     };
 }
@@ -349,13 +357,17 @@ function normalizeProfile(p, origin) {
     });
     var delay = Number(c.delay_ms);
     var delayMs = isFinite(delay) && delay > 0 ? Math.min(delay, MAX_DELAY_MS) : 0;
+    var repeatFor = typeof c.repeat_for === "string" ? c.repeat_for.trim() : "";
+    var entryDelay = Number(c.entry_delay_ms);
+    var entryDelayMs = isFinite(entryDelay) && entryDelay > 0 ? Math.min(entryDelay, MAX_DELAY_MS) : 0;
     var recipe = {
         origin: origin, appId: appId, scene: p.scene, name: typeof p.name === "string" ? p.name : "",
         goal: c.goal, triggers: triggers, entries: entries, suppress: suppress, delayMs: delayMs,
+        repeatFor: repeatFor, entryDelayMs: entryDelayMs,
         notes: typeof c.notes === "string" ? c.notes : "", source: typeof c.source === "string" ? c.source : "",
         problems: problems
     };
-    recipe.sig = JSON.stringify([origin, appId, p.scene, c.goal, triggers, entries, suppress, delayMs]);
+    recipe.sig = JSON.stringify([origin, appId, p.scene, c.goal, triggers, entries, suppress, delayMs, repeatFor, entryDelayMs]);
     return { recipe: recipe };
 }
 
@@ -433,11 +445,98 @@ function matchedRecipe(names) {
     return best;
 }
 
+function detectDynamicCollectibleRecipe(app, sceneNames) {
+    if (!app || !app.root || !S.appId) return null;
+    var scene = sceneNames && sceneNames.length ? sceneNames[0] : "";
+    var stack = [app.root];
+    var collectibles = [];
+    while (stack.length && collectibles.length < MAX_ENTITIES) {
+        var e = stack.pop();
+        if (!e) continue;
+        if (e !== app.root) {
+            var nm = (e.name || "").toLowerCase();
+            var isCollect = /collectable|sticker|crystal|pickup|item/i.test(nm);
+            if (!isCollect && e.script) {
+                isCollect = !!(e.script.inspectionObject || e.script.collectable || e.script.collectible || e.script.sendEventOnClickCollider);
+            }
+            if (isCollect && e.name) collectibles.push(e);
+        }
+        var ch = e.children || [];
+        for (var i = ch.length - 1; i >= 0; i--) stack.push(ch[i]);
+    }
+    if (collectibles.length < 2) return null;
+
+    var names = collectibles.map(function (c) { return c.name; });
+    var prefix = names[0];
+    for (var n = 1; n < names.length; n++) {
+        while (prefix.length && names[n].indexOf(prefix) !== 0) {
+            prefix = prefix.slice(0, prefix.length - 1);
+        }
+    }
+    var pattern = prefix.length >= 4 ? prefix + "*" : "Collectable_*";
+
+    var callbacks = app._callbacks || (app._l || {});
+    var evKeys = [];
+    if (callbacks) {
+        if (typeof callbacks.forEach === "function") {
+            callbacks.forEach(function (v, k) { if (typeof k === "string") evKeys.push(k); });
+        } else if (typeof callbacks.keys === "function") {
+            evKeys = Array.from(callbacks.keys());
+        } else {
+            evKeys = Object.keys(callbacks);
+        }
+    }
+    var inspectEv = evKeys.find(function (k) { return /^inspect:item/i.test(k); }) || "inspect:item";
+    var takeEv = evKeys.find(function (k) { return /button:.*:take|take:item|collect/i.test(k); }) ||
+                 evKeys.find(function (k) { return /take/i.test(k); }) ||
+                 (pattern.toLowerCase().indexOf("sticker") >= 0 ? "button:sticker:take" : null);
+    if (!takeEv) return null;
+
+    var completeEv = evKeys.find(function (k) { return /button:.*:complete|finish.*inspect|uiClose/i.test(k); }) ||
+                     (pattern.toLowerCase().indexOf("sticker") >= 0 ? "button:sticker:complete" : null);
+
+    var entries = [
+        { name: inspectEv, scope: "app", args: ["@entity:this"], source: "guessed" },
+        { name: takeEv, scope: "app", args: [], source: "guessed" }
+    ];
+    if (completeEv) {
+        entries.push({ name: completeEv, scope: "app", args: [], source: "guessed" });
+    }
+
+    var triggers = [inspectEv, takeEv];
+    var raw = {
+        version: 1,
+        goal: "quest-completed",
+        triggers: triggers,
+        repeat_for: pattern,
+        entry_delay_ms: 1000,
+        entries: entries,
+        suppress: ["leaderboard"],
+        delay_ms: 0,
+        notes: "Dynamic collectible heuristic from scene entities (" + collectibles.length + " items matching " + pattern + ")",
+        source: "guessed"
+    };
+
+    var norm = normalizeProfile({
+        application_id: S.appId,
+        scene: scene,
+        name: "Dynamic Collectible",
+        completion: raw
+    }, "guessed");
+
+    if (norm && norm.recipe) {
+        noteOnce("dynamic_collectible", "synthesized dynamic recipe for " + collectibles.length + " collectible items: " + pattern, "info");
+        return norm.recipe;
+    }
+    return null;
+}
+
 function currentRecipe() {
     var names = sceneNames(S.app);
     var best = matchedRecipe(names);
     if (best) return best;
-    return S.guessed && S.appId && names.indexOf(S.guessed.scene) >= 0 ? S.guessed : null;
+    if (S.guessed && S.appId && names.indexOf(S.guessed.scene) >= 0) return S.guessed;
+    return detectDynamicCollectibleRecipe(S.app, names);
 }
 
 function gate() {
@@ -571,6 +670,12 @@ function patchPostMessage() {
     var orig = arise.postMessage;
     var hadOwn = hasOwn(arise, "postMessage");
     var wrapper = function (message) {
+        try {
+            var isComp = false;
+            if (typeof message === "string" && message.indexOf("quest-completed") >= 0) isComp = true;
+            else if (isObj(message) && (message.type === "quest-completed" || message.event === "quest-completed" || message.cmd === "quest-completed")) isComp = true;
+            if (isComp) goalSighting();
+        } catch (e) { }
         var hit = "";
         try { if (S.windowOpen) hit = findMatch(messageLabels(message, 0), S.suppress); } catch (e) { note("message filter failed: " + msgOf(e), "warn"); }
         if (hit) {
@@ -662,17 +767,64 @@ function entityIndex(app) {
     return { byGuid: byGuid, byName: byName };
 }
 
-function decodeArg(v, index, state, depth) {
-    if (typeof v === "string" && v.indexOf(ENTITY_PREFIX) === 0) {
-        var guid = v.slice(ENTITY_PREFIX.length);
-        var ent = index ? index.byGuid[guid] : null;
-        if (!ent) { state.missing = guid; return null; }
+function findMatchingEntities(app, pattern) {
+    if (!app || !app.root || !pattern) return [];
+    var all = [];
+    var stack = [app.root];
+    while (stack.length && all.length < MAX_ENTITIES) {
+        var e = stack.pop();
+        if (!e) continue;
+        all.push(e);
+        var kids = e.children || [];
+        for (var i = kids.length - 1; i >= 0; i--) stack.push(kids[i]);
+    }
+    var matched = [];
+    if (pattern.indexOf("@tag:") === 0) {
+        var tag = pattern.slice(5).trim().toLowerCase();
+        matched = all.filter(function (e) {
+            return e && e.enabled !== false && e.tags && typeof e.tags.has === "function" && e.tags.has(tag);
+        });
+    } else {
+        var parts = pattern.split("*");
+        var escaped = [];
+        for (var p = 0; p < parts.length; p++) {
+            var s = parts[p], out = "";
+            for (var c = 0; c < s.length; c++) {
+                var ch = s.charAt(c);
+                if (".+*?^()[]{}|\\$".indexOf(ch) >= 0) out += "\\" + ch;
+                else out += ch;
+            }
+            escaped.push(out);
+        }
+        var re = new RegExp("^" + escaped.join(".*") + "$", "i");
+        matched = all.filter(function (e) {
+            return e && e.enabled !== false && typeof e.name === "string" && re.test(e.name);
+        });
+    }
+    matched.sort(function (a, b) {
+        var na = String(a.name || ""), nb = String(b.name || "");
+        return na.localeCompare(nb, undefined, { numeric: true, sensitivity: "base" });
+    });
+    return matched;
+}
+
+function decodeArg(v, index, state, depth, curEntity) {
+    if (typeof v === "string" && (v === "@entity" || v.indexOf(ENTITY_PREFIX) === 0)) {
+        var target = v === "@entity" ? "" : v.slice(ENTITY_PREFIX.length);
+        if (!target || target === "current" || target === "this") {
+            if (curEntity) return curEntity;
+        }
+        var ent = index ? (index.byGuid[target] || index.byName[target]) : null;
+        if (!ent && curEntity && (curEntity.name === target || (typeof curEntity.getGuid === "function" && curEntity.getGuid() === target))) {
+            ent = curEntity;
+        }
+        if (!ent) { state.missing = target; return null; }
         return ent;
     }
     if (v === null || typeof v !== "object" || depth >= MAX_DEPTH) return v;
-    if (Array.isArray(v)) return v.map(function (x) { return decodeArg(x, index, state, depth + 1); });
+    if (Array.isArray(v)) return v.map(function (x) { return decodeArg(x, index, state, depth + 1, curEntity); });
     var copy = {};
-    Object.keys(v).forEach(function (k) { copy[k] = decodeArg(v[k], index, state, depth + 1); });
+    Object.keys(v).forEach(function (k) { copy[k] = decodeArg(v[k], index, state, depth + 1, curEntity); });
     return copy;
 }
 
@@ -740,46 +892,113 @@ function runAttempt(trigger) {
     S.goalSeen = false;
     openWindow(recipe);
 
-    var ran = [], skipped = [], hit = "";
-    try {
-        var index = null;
-        for (var i = 0; i < recipe.entries.length && !S.goalSeen; i++) {
-            var entry = recipe.entries[i];
-            var why = refusal(entry, recipe);
-            if (why) { skip(skipped, entry.name + " (" + why + ")"); continue; }
-            if (entry.needsIndex && !index) index = entityIndex(S.app);
-            var target = S.app;
-            if (entry.scope === "entity") {
-                target = (entry.guid && index.byGuid[entry.guid]) || (entry.entity && index.byName[entry.entity]) || null;
-            }
-            if (!target || typeof target.fire !== "function") {
-                skip(skipped, entry.name + " (entity " + (entry.entity || entry.guid) + " not found)");
-                continue;
-            }
-            var state = { missing: "" };
-            var args = decodeArg(entry.args, index, state, 0);
-            if (state.missing) { skip(skipped, entry.name + " (entity " + state.missing + " not found)"); continue; }
-            try {
-                target.fire.apply(target, [entry.name].concat(args));
-                ran.push(entry.name);
-            } catch (err) {
-                ran.push(entry.name + " (threw " + msgOf(err) + ")");
-                note("entry " + entry.name + " threw: " + msgOf(err), "warn");
-            }
-            if (S.goalSeen) hit = entry.name;
+    var index = null;
+    var tasks = [];
+
+    var getMatching = function(pattern) {
+        return findMatchingEntities(S.app, pattern);
+    };
+
+    if (recipe.repeatFor) {
+        var targets = getMatching(recipe.repeatFor);
+        if (!targets.length) {
+            note("repeat_for pattern " + recipe.repeatFor + " matched no enabled entities in the scene", "warn");
         }
-    } finally {
-        S.attempting = false;
-        armWindowClose();
+        for (var t = 0; t < targets.length; t++) {
+            for (var e = 0; e < recipe.entries.length; e++) {
+                tasks.push({ entry: recipe.entries[e], entity: targets[t] });
+            }
+        }
+    } else {
+        for (var e = 0; e < recipe.entries.length; e++) {
+            var ent = recipe.entries[e];
+            if (ent.repeatFor) {
+                var targets = getMatching(ent.repeatFor);
+                for (var t = 0; t < targets.length; t++) {
+                    tasks.push({ entry: ent, entity: targets[t] });
+                }
+            } else {
+                tasks.push({ entry: ent, entity: null });
+            }
+        }
     }
 
-    if (S.goalSeen) {
-        succeed("attempt " + S.attempts + " on " + trigger + " via " + hit);
-        return;
+    var ran = [], skipped = [], hit = "";
+
+    function finishAttempt() {
+        S.attempting = false;
+        armWindowClose();
+        if (S.goalSeen) {
+            succeed("attempt " + S.attempts + " on " + trigger + " via " + (hit || "goal event"));
+            return;
+        }
+        var left = recipe.triggers.filter(function (t) { return !S.used[t]; }).length;
+        note("attempt " + S.attempts + " on " + trigger + " did not reach " + recipe.goal + "; ran: " + (ran.join(", ") || "nothing") +
+            (skipped.length ? "; skipped: " + skipped.join(", ") : "") + (left ? "; waiting for another trigger" : "; no triggers left"), "info");
     }
-    var left = recipe.triggers.filter(function (t) { return !S.used[t]; }).length;
-    note("attempt " + S.attempts + " on " + trigger + " did not reach " + recipe.goal + "; ran: " + (ran.join(", ") || "nothing") +
-        (skipped.length ? "; skipped: " + skipped.join(", ") : "") + (left ? "; waiting for another trigger" : "; no triggers left"), "info");
+
+    function step(taskIndex) {
+        if (S.goalSeen || taskIndex >= tasks.length) {
+            finishAttempt();
+            return;
+        }
+        var task = tasks[taskIndex];
+        var entry = task.entry;
+        var curEntity = task.entity;
+
+        var why = refusal(entry, recipe);
+        if (why) {
+            skip(skipped, entry.name + " (" + why + ")");
+            step(taskIndex + 1);
+            return;
+        }
+
+        if ((entry.needsIndex || curEntity) && !index) index = entityIndex(S.app);
+        var target = S.app;
+        if (entry.scope === "entity") {
+            if (curEntity) {
+                target = curEntity;
+            } else {
+                target = (entry.guid && index.byGuid[entry.guid]) || (entry.entity && index.byName[entry.entity]) || null;
+            }
+        }
+        if (!target || typeof target.fire !== "function") {
+            skip(skipped, entry.name + " (entity " + (entry.entity || entry.guid || (curEntity && curEntity.name)) + " not found)");
+            step(taskIndex + 1);
+            return;
+        }
+
+        var state = { missing: "" };
+        var args = decodeArg(entry.args, index, state, 0, curEntity);
+        if (state.missing) {
+            skip(skipped, entry.name + " (entity " + state.missing + " not found)");
+            step(taskIndex + 1);
+            return;
+        }
+
+        try {
+            target.fire.apply(target, [entry.name].concat(args));
+            ran.push(entry.name);
+        } catch (err) {
+            ran.push(entry.name + " (threw " + msgOf(err) + ")");
+            note("entry " + entry.name + " threw: " + msgOf(err), "warn");
+        }
+
+        if (S.goalSeen) hit = entry.name;
+        if (S.goalSeen || taskIndex + 1 >= tasks.length) {
+            finishAttempt();
+            return;
+        }
+
+        var delay = entry.delayMs || recipe.entryDelayMs || 0;
+        if (delay > 0) {
+            setTimeout(guarded("next entry", function () { step(taskIndex + 1); }), delay);
+        } else {
+            step(taskIndex + 1);
+        }
+    }
+
+    step(0);
 }
 
 // One attempt per trigger name, after the click's own synchronous chain has finished.
