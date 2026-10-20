@@ -826,7 +826,9 @@ def _is_port_free(port: int) -> bool:
             return False
 
 
-def _find_free_port(start: int = 5000, end: int = 5050) -> int | None:
+def _find_free_port(start: int = 5000, end: int | None = None) -> int | None:
+    if end is None:
+        end = start + 50
     for port in range(start, end + 1):
         if _is_port_free(port):
             return port
@@ -850,6 +852,7 @@ def run_server(port: int = 5000):
             server_state.log_event(f"Error: {msg}")
             return
 
+    server_state.set_server_port(actual_port)
     log.info(f"Starting server on port {actual_port}...")
     server_state.log_event(f"Server started on port {actual_port}")
     try:
@@ -862,6 +865,25 @@ def run_server(port: int = 5000):
         msg = f"Server error: {e}"
         log.error(msg)
         server_state.log_event(f"Error: {msg}")
+
+
+def get_configured_port() -> int:
+    if len(sys.argv) > 1:
+        try:
+            return int(sys.argv[1])
+        except ValueError:
+            pass
+    if PREFS_FILE.exists():
+        try:
+            import json
+            with open(PREFS_FILE, "r") as f:
+                data = json.load(f)
+                val = data.get("server_port")
+                if val is not None:
+                    return int(val)
+        except Exception:
+            pass
+    return 5000
 
 
 if __name__ == "__main__":
@@ -880,7 +902,7 @@ if __name__ == "__main__":
                 pass
         sys.exit(0)
 
-    port = int(sys.argv[1]) if len(sys.argv) > 1 else 5000
+    port = get_configured_port()
 
     t = threading.Thread(target=_run_server_thread, args=(port,), daemon=True)
     t.start()

@@ -77,4 +77,3 @@ A Vencord plugin to automate Discord Quests.
 - Custom quest home page
 - Start individual quests
 - See quest expiration date
-- Port changer

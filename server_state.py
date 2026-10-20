@@ -62,6 +62,20 @@ def get_stub_cleanup() -> tuple[str, int]:
         return _stub_cleanup_mode, _stub_cleanup_days
 
 
+_server_port: int = 5000
+
+
+def set_server_port(port: int):
+    global _server_port
+    with _lock:
+        _server_port = int(port)
+
+
+def get_server_port() -> int:
+    with _lock:
+        return _server_port
+
+
 def log_event(message: str, user_id: str | None = None):
     global _log_cursor
     ts = datetime.now().strftime("%H:%M:%S")

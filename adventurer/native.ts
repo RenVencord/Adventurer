@@ -15,6 +15,7 @@
 
 import { IpcMainInvokeEvent, WebContents, WebFrameMain } from "electron";
 import { readdirSync, readFileSync } from "fs";
+import http from "http";
 import { homedir } from "os";
 import { join } from "path";
 
@@ -145,3 +146,65 @@ export function setOverlayScript(event: IpcMainInvokeEvent, script: string): boo
 export function clearOverlayScript(event: IpcMainInvokeEvent): void {
     currentScripts.delete(event.sender);
 }
+
+/**
+ * Sends an HTTP request from Electron's main process (Node.js).
+ * Because this runs in Node rather than Chromium's renderer network stack,
+ * failed connections (e.g. ECONNREFUSED when the local Python server is offline)
+ * do NOT trigger Chromium's "Failed to load resource: net::ERR_CONNECTION_REFUSED"
+ * console error spam in DevTools.
+ */
+export async function sendServerRequest(
+    _event: IpcMainInvokeEvent,
+    url: string,
+    options: { method?: string; headers?: Record<string, string>; body?: string; timeout?: number } = {}
+): Promise<{ ok: boolean; status: number; text?: string; error?: string }> {
+    return new Promise(resolve => {
+        try {
+            const u = new URL(url);
+            const bodyStr = options.body ?? "";
+            const headers: Record<string, string> = {
+                ...(options.headers || {})
+            };
+            if (bodyStr && !headers["Content-Length"] && !headers["content-length"]) {
+                headers["Content-Length"] = String(Buffer.byteLength(bodyStr));
+            }
+
+            const req = http.request({
+                hostname: u.hostname,
+                port: u.port || 80,
+                path: u.pathname + u.search,
+                method: options.method || "GET",
+                headers,
+                timeout: options.timeout ?? 3000
+            }, res => {
+                let data = "";
+                res.on("data", chunk => { data += chunk; });
+                res.on("end", () => {
+                    resolve({
+                        ok: (res.statusCode ?? 0) >= 200 && (res.statusCode ?? 0) < 300,
+                        status: res.statusCode ?? 0,
+                        text: data
+                    });
+                });
+            });
+
+            req.on("error", err => {
+                resolve({ ok: false, status: 0, error: err.message });
+            });
+
+            req.on("timeout", () => {
+                req.destroy();
+                resolve({ ok: false, status: 0, error: "timeout" });
+            });
+
+            if (bodyStr) {
+                req.write(bodyStr);
+            }
+            req.end();
+        } catch (e: any) {
+            resolve({ ok: false, status: 0, error: e?.message ?? String(e) });
+        }
+    });
+}
+

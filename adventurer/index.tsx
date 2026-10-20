@@ -39,8 +39,11 @@ const _knownQuestIds = new Set<string>();
 let _questIdsInitialized = false;
 const _assistedQuestIds = new Set<string>();
 
-let _heartbeatIntervalHandle: any = null;
+let _heartbeatTimeoutHandle: any = null;
 let _serverOnline = false;
+let _heartbeatBackoffMs = 3000;
+const HEARTBEAT_BASE_INTERVAL = 3000;
+const HEARTBEAT_MAX_BACKOFF = 30000;
 
 const _barState = {
     activeQuestName: null as string | null,
@@ -55,7 +58,7 @@ function updateBar(patch: Partial<typeof _barState>) {
 }
 
 const LOGO_URL = "https://raw.githubusercontent.com/RenVencord/Adventurer/refs/heads/main/assets/logo.png";
-const PLUGIN_VERSION = "1.2.0";
+const PLUGIN_VERSION = "1.2.3";
 
 const ToastType = {
     MESSAGE: 0,
@@ -107,14 +110,62 @@ function getServer() {
     return `http://127.0.0.1:${port}`;
 }
 
+async function requestServer(
+    endpoint: string,
+    options: { method?: string; body?: any; timeout?: number; headers?: Record<string, string> } = {}
+): Promise<{ ok: boolean; status: number; json: () => Promise<any> }> {
+    const url = `${getServer()}${endpoint}`;
+    const bodyStr = options.body !== undefined
+        ? (typeof options.body === "string" ? options.body : JSON.stringify(options.body))
+        : undefined;
+    const headers: Record<string, string> = {
+        "Content-Type": "application/json",
+        ...(options.headers || {})
+    };
+
+    if (Native && typeof (Native as any).sendServerRequest === "function") {
+        try {
+            const res = await (Native as any).sendServerRequest(url, {
+                method: options.method || "GET",
+                headers,
+                body: bodyStr,
+                timeout: options.timeout ?? 3000
+            });
+            return {
+                ok: !!res?.ok,
+                status: res?.status ?? 0,
+                json: async () => {
+                    try { return JSON.parse(res?.text || "{}"); } catch { return null; }
+                }
+            };
+        } catch {
+            return {
+                ok: false,
+                status: 0,
+                json: async () => null
+            };
+        }
+    }
+
+    const res = await fetch(url, {
+        method: options.method || "GET",
+        headers,
+        body: bodyStr
+    });
+    return {
+        ok: res.ok,
+        status: res.status,
+        json: () => res.json()
+    };
+}
+
 async function reportAssist(questId: string) {
     if (!questId) return;
     _assistedQuestIds.add(String(questId));
     try {
-        await fetch(`${getServer()}/assist`, {
+        await requestServer("/assist", {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ questId: String(questId) })
+            body: { questId: String(questId) }
         });
     } catch { }
 }
@@ -426,10 +477,9 @@ async function skipActiveQuest(questId: string) {
     }
 
     try {
-        await fetch(`${getServer()}/skip`, {
+        await requestServer("/skip", {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ questId, userId: getCurrentUserId() })
+            body: { questId, userId: getCurrentUserId() }
         });
     } catch (e) {
         console.warn("[Adventurer] Failed to send skip command to server:", e);
@@ -450,10 +500,9 @@ function toggleSkipQuest(questId: string) {
     if (isSkipped) {
         skipped = skipped.filter(id => id !== questId);
         settings.store.skippedQuestsData = JSON.stringify(skipped);
-        fetch(`${getServer()}/unskip`, {
+        requestServer("/unskip", {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ questId, userId: getCurrentUserId() })
+            body: { questId, userId: getCurrentUserId() }
         }).catch(() => {});
         if (settings.store.enableGameTracking) {
             processQuests();
@@ -848,16 +897,16 @@ function stopUIObserver() {
 }
 
 async function reportActiveStatus(questId: string | null, quest: any | null, statusData: { type: string; endsAt: number } | null) {
+    if (!_serverOnline && !statusData) return;
     try {
-        await fetch(`${getServer()}/active`, {
+        await requestServer("/active", {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
+            body: {
                 questId,
                 quest,
                 statusData,
                 userId: getCurrentUserId()
-            })
+            }
         });
     } catch { }
 }
@@ -879,12 +928,10 @@ async function sendHeartbeat(force = false) {
     }
     _lastHeartbeatQuestIds = fingerprint;
 
-    const url = `${getServer()}/heartbeat`;
     try {
-        const res = await fetch(url, {
+        const res = await requestServer("/heartbeat", {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
+            body: {
                 quests: all,
                 userId: getCurrentUserId(),
                 username: getCurrentUsername(),
@@ -892,7 +939,7 @@ async function sendHeartbeat(force = false) {
                 skippedQuests: getSkippedQuests(),
                 assistedQuestIds: Array.from(_assistedQuestIds),
                 pluginVersion: PLUGIN_VERSION
-            })
+            }
         });
 
         if (res.ok) {
@@ -934,10 +981,10 @@ async function sendHeartbeat(force = false) {
         } else {
             _serverOnline = false;
             _heartbeatFailureCount++;
-            if (_heartbeatFailureCount >= 2) {
+            if (_heartbeatFailureCount >= 2 && settings.store.gameTrackingMode === "server") {
                 try {
                     const data = await res.json();
-                    updateBar({ error: `${res.status} — ${data.error || "Server Error"}` });
+                    updateBar({ error: `${res.status} — ${data?.error || "Server Error"}` });
                 } catch {
                     updateBar({ error: `${res.status} — Server Error` });
                 }
@@ -947,7 +994,7 @@ async function sendHeartbeat(force = false) {
     } catch (e) {
         _serverOnline = false;
         _heartbeatFailureCount++;
-        if (_heartbeatFailureCount >= 2) {
+        if (_heartbeatFailureCount >= 2 && settings.store.gameTrackingMode === "server") {
             updateBar({ error: SERVER_OFFLINE_ERROR });
         }
         return false;
@@ -1982,10 +2029,9 @@ async function stopGame(questName?: string, pauseAutoComplete = false) {
             stopGameDebug();
         }
         try {
-            await fetch(`${getServer()}/stop`, {
+            await requestServer("/stop", {
                 method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ userId: getCurrentUserId(), pauseAutoComplete })
+                body: { userId: getCurrentUserId(), pauseAutoComplete }
             });
         } catch (e) {
             console.error("[Adventurer] Failed to send stop command to game server:", e);
@@ -2017,10 +2063,9 @@ async function launchGame(appId: string, quest: any, forceExe?: string): Promise
             const body: any = { id: appId, quest, userId: getCurrentUserId() };
             if (forceExe) body.forceExe = forceExe;
 
-            const res = await fetch(`${getServer()}/run`, {
+            const res = await requestServer("/run", {
                 method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify(body)
+                body
             });
 
             if (!res.ok) {
@@ -2498,38 +2543,37 @@ async function processQuests(): Promise<void> {
 
     const skippedIds = getSkippedQuests();
 
-    console.log(`[Adventurer] processQuests: ${accepted.length} accepted quests, enableGameTracking=${settings.store.enableGameTracking}, mode=${settings.store.gameTrackingMode}, seen=${seen.size}, skipped=${skippedIds.length}`);
-
-
+    let newlyQueued = 0;
     for (const quest of accepted) {
         const task = getQuestTask(quest);
         const questName = quest?.config?.messages?.questName ?? quest?.id;
 
-        if (isQuestComplete(quest)) { console.log(`[Adventurer] SKIP ${questName}: already complete`); continue; }
-        if (seen.has(quest.id)) { console.log(`[Adventurer] SKIP ${questName}: already seen`); continue; }
-        if (skippedIds.includes(quest.id)) { console.log(`[Adventurer] SKIP ${questName}: user skipped`); continue; }
-        if (!task) { console.log(`[Adventurer] SKIP ${questName}: no task found`); continue; }
+        if (isQuestComplete(quest)) continue;
+        if (seen.has(quest.id)) continue;
+        if (skippedIds.includes(quest.id)) continue;
+        if (!task) continue;
 
         if (task.type !== QuestType.GAME) {
-            console.log(`[Adventurer] SKIP ${questName}: non-game quest (type=${task.type}) - client handled`);
             continue;
         }
 
         const appId = getQuestAppId(quest, task);
         if (!appId) {
-            console.log(`[Adventurer] SKIP ${questName}: missing valid desktop appId`);
             continue;
         }
 
-        if (!settings.store.enableGameTracking) { console.log(`[Adventurer] SKIP ${questName}: game tracking disabled`); continue; }
+        if (!settings.store.enableGameTracking) continue;
 
         console.log(`[Adventurer] QUEUED GAME QUEST: ${questName} (appId=${appId})`);
         queue.push({ quest, appId, questName, task });
         seen.add(quest.id);
+        newlyQueued++;
     }
 
-    console.log(`[Adventurer] processQuests: ${queue.length} quests queued (wasRunning=${wasRunning})`);
-    if (queue.length > 0 && !wasRunning) runQueue();
+    if (newlyQueued > 0 || (queue.length > 0 && !wasRunning)) {
+        console.log(`[Adventurer] processQuests: ${queue.length} quests queued (wasRunning=${wasRunning})`);
+        if (queue.length > 0 && !wasRunning) runQueue();
+    }
 }
 
 function onQuestsFetched() {
@@ -2841,6 +2885,46 @@ function ThreeDotMenu({ open, setOpen }: { open: boolean, setOpen: (v: boolean) 
             )}
         </>
     );
+}
+
+function scheduleNextHeartbeat(delayMs = _heartbeatBackoffMs) {
+    if (_heartbeatTimeoutHandle) {
+        clearTimeout(_heartbeatTimeoutHandle);
+        _heartbeatTimeoutHandle = null;
+    }
+    _heartbeatTimeoutHandle = setTimeout(async () => {
+        await heartbeatTick();
+    }, delayMs);
+}
+
+function triggerImmediateHeartbeat() {
+    _heartbeatBackoffMs = HEARTBEAT_BASE_INTERVAL;
+    scheduleNextHeartbeat(0);
+}
+
+async function heartbeatTick() {
+    if (location.pathname.includes("/quest-home")) {
+        if (normalizeAllQuests()) {
+            try { findStoreLazy("QuestStore")?.emitChange?.(); } catch (e) { }
+        }
+        if (settings.store.barHidden) {
+            settings.store.barHidden = false;
+            try { findStoreLazy("QuestStore")?.emitChange?.(); } catch (e) { }
+            FluxDispatcher.dispatch({ type: "QUEST_UPDATE" });
+        }
+    }
+
+    const wasOnline = _serverOnline;
+    const isOnline = await sendHeartbeat(true);
+
+    if (isOnline) {
+        _heartbeatBackoffMs = HEARTBEAT_BASE_INTERVAL;
+        processQuests();
+    } else {
+        _heartbeatBackoffMs = Math.min(_heartbeatBackoffMs * 2, HEARTBEAT_MAX_BACKOFF);
+    }
+
+    scheduleNextHeartbeat(_heartbeatBackoffMs);
 }
 
 export default definePlugin({
@@ -3288,19 +3372,13 @@ export default definePlugin({
 
     start() {
         console.log("[Adventurer] Plugin start() called!");
-        fetch(`${getServer()}/reset`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ userId: getCurrentUserId() })
-        }).catch((e) => {
-            console.warn("[Adventurer] Initial server reset failed (server likely offline):", e);
-        });
 
         queue.length = 0;
         seen.clear();
         running = false;
         _lastHeartbeatQuestIds = "";
         _heartbeatFailureCount = 0;
+        _heartbeatBackoffMs = HEARTBEAT_BASE_INTERVAL;
         updateBar({ forceKillVisible: false });
 
         initKnownQuests();
@@ -3321,32 +3399,8 @@ export default definePlugin({
         QUEST_SYNC_EVENTS.forEach(type => FluxDispatcher.subscribe(type, scheduleQuestSync));
 
         startUIObserver();
-        sendHeartbeat(true);
 
-        console.log("[Adventurer] Setting up heartbeat interval...");
-        _heartbeatIntervalHandle = setInterval(async () => {
-            console.log("[Adventurer] Heartbeat tick");
-            if (location.pathname.includes("/quest-home")) {
-                if (normalizeAllQuests()) {
-                    try { findStoreLazy("QuestStore")?.emitChange?.(); } catch (e) { }
-                }
-                if (settings.store.barHidden) {
-                    settings.store.barHidden = false;
-                    try { findStoreLazy("QuestStore")?.emitChange?.(); } catch (e) { }
-                    FluxDispatcher.dispatch({ type: "QUEST_UPDATE" });
-                }
-            }
-
-            const wasOnline = _serverOnline;
-            const isOnline = await sendHeartbeat(true);
-
-            // Always try to process quests on each heartbeat tick.
-            // Previously this only ran on server reconnection, meaning new
-            // quests discovered between Discord events were silently dropped.
-            if (isOnline) {
-                processQuests();
-            }
-        }, 3000);
+        scheduleNextHeartbeat(0);
     },
 
     stop() {
@@ -3359,21 +3413,18 @@ export default definePlugin({
             _questSyncTimer = null;
         }
 
-        if (_heartbeatIntervalHandle) {
-            clearInterval(_heartbeatIntervalHandle);
-            _heartbeatIntervalHandle = null;
+        if (_heartbeatTimeoutHandle) {
+            clearTimeout(_heartbeatTimeoutHandle);
+            _heartbeatTimeoutHandle = null;
         }
 
         if (_debugGameQuestId || _activeDebugGame) stopGameDebug();
         unpatchGameStore();
-        if (!_debugGameQuestId) {
-            fetch(`${getServer()}/stop`, {
+        if (!_debugGameQuestId && _serverOnline) {
+            requestServer("/stop", {
                 method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ userId: getCurrentUserId(), pauseAutoComplete: true })
-            }).catch((e) => {
-                console.error("[Adventurer] Failed to send shutdown stop command to server:", e);
-            });
+                body: { userId: getCurrentUserId(), pauseAutoComplete: true }
+            }).catch(() => { });
         }
 
         stopVideoObserver();

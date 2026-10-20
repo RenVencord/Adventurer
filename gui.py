@@ -84,6 +84,7 @@ def load_prefs() -> dict:
         "orbs_only": True,
         "min_orbs": 0,
         "notify_video": True,
+        "server_port": 5000,
         "log_heartbeats": False,
         "log_progress": False,
         "log_completion": True,
@@ -108,6 +109,10 @@ def load_prefs() -> dict:
                 defaults.update(saved)
         except Exception:
             pass
+    try:
+        defaults["server_port"] = int(defaults.get("server_port", 5000))
+    except (ValueError, TypeError):
+        defaults["server_port"] = 5000
     return defaults
 
 
@@ -118,6 +123,19 @@ def save_prefs(prefs: dict):
             json.dump(prefs, f)
     except Exception:
         pass
+
+
+def get_server_url(path: str = "") -> str:
+    port = server_state.get_server_port()
+    if not port:
+        try:
+            prefs = load_prefs()
+            port = int(prefs.get("server_port", 5000))
+        except Exception:
+            port = 5000
+    if not path.startswith("/"):
+        path = "/" + path
+    return f"http://127.0.0.1:{port}{path}"
 
 
 def record_installed_plugin_version(prefs: dict, version: str):
@@ -907,7 +925,7 @@ class ActiveQuestPanel(QWidget):
         server_state.set_auto_complete_enabled(False)
         try:
             body = json.dumps({"pauseAutoComplete": True}).encode("utf-8")
-            req = urllib.request.Request("http://127.0.0.1:5000/stop", data=body, headers={"Content-Type": "application/json"})
+            req = urllib.request.Request(get_server_url("/stop"), data=body, headers={"Content-Type": "application/json"})
             urllib.request.urlopen(req, timeout=3)
         except Exception:
             pass
@@ -915,7 +933,7 @@ class ActiveQuestPanel(QWidget):
     def _on_click_start(self):
         server_state.set_auto_complete_enabled(True)
         try:
-            req = urllib.request.Request("http://127.0.0.1:5000/start", data=b"{}", headers={"Content-Type": "application/json"})
+            req = urllib.request.Request(get_server_url("/start"), data=b"{}", headers={"Content-Type": "application/json"})
             urllib.request.urlopen(req, timeout=3)
         except Exception:
             pass
@@ -926,7 +944,7 @@ class ActiveQuestPanel(QWidget):
         server_state.add_skipped_quest(self._current_quest_id)
         try:
             body = json.dumps({"questId": self._current_quest_id}).encode("utf-8")
-            req = urllib.request.Request("http://127.0.0.1:5000/skip", data=body, headers={"Content-Type": "application/json"})
+            req = urllib.request.Request(get_server_url("/skip"), data=body, headers={"Content-Type": "application/json"})
             urllib.request.urlopen(req, timeout=3)
         except Exception:
             pass
@@ -1177,6 +1195,27 @@ class SettingsDialog(QDialog):
 
         form.addRow("Fake Games Dir:", dir_box)
 
+        div3 = QFrame()
+        div3.setFrameShape(QFrame.Shape.HLine)
+        div3.setStyleSheet(f"background: {BORDER.name()};")
+        form.addRow(div3)
+
+        self.spin_server_port = QSpinBox()
+        self.spin_server_port.setRange(1024, 65535)
+        self.spin_server_port.setValue(int(prefs.get("server_port", 5000)))
+        form.addRow("Server Port:", self.spin_server_port)
+
+        port_note = QLabel("Requires restarting Adventurer to take effect.")
+        port_note.setStyleSheet(f"color: {TEXT_MUTED.name()}; font-size: 11px;")
+        form.addRow("", port_note)
+
+        active_port = server_state.get_server_port()
+        configured_port = int(prefs.get("server_port", 5000))
+        if active_port and active_port != configured_port:
+            port_active = QLabel(f"Currently listening on port {active_port}")
+            port_active.setStyleSheet(f"color: {ACCENT_GOLD.name()}; font-size: 11px;")
+            form.addRow("", port_active)
+
         layout.addLayout(form)
 
         btns = QDialogButtonBox(
@@ -1203,6 +1242,7 @@ class SettingsDialog(QDialog):
         p["stub_cleanup_mode"] = self.combo_cleanup.currentData()
         p["stub_cleanup_days"] = self.spin_cleanup_days.value()
         p["fake_games_dir"] = self.txt_fake_games_dir.text().strip() or APPDATA_DIR
+        p["server_port"] = self.spin_server_port.value()
         return p
 
 
@@ -2093,7 +2133,23 @@ class AboutDialog(QDialog):
         )
         text_col.addWidget(vencord_lbl)
 
-        # 6. Copyright
+        # 6. Server port
+        configured_port = self._prefs.get("server_port", 5000)
+        active_port = server_state.get_server_port()
+        port_text = str(configured_port)
+        if active_port and active_port != configured_port:
+            port_text = f"{configured_port} (running on {active_port})"
+        self._server_port_info = port_text
+
+        port_lbl = QLabel()
+        port_lbl.setTextFormat(Qt.TextFormat.RichText)
+        port_lbl.setText(
+            f"<span style='color: {TEXT_MUTED.name()}; font-size: 11px; font-weight: 600;'>Server port:</span> "
+            f"<span style='color: {TEXT_PRIMARY.name()}; font-size: 11px;'>{port_text}</span>"
+        )
+        text_col.addWidget(port_lbl)
+
+        # 7. Copyright
         copyright_lbl = QLabel("© RenVencord")
         copyright_lbl.setStyleSheet(f"color: {TEXT_MUTED.name()}; font-size: 11px;")
         text_col.addWidget(copyright_lbl)
@@ -2159,6 +2215,7 @@ class AboutDialog(QDialog):
             f"Adventurer {self._version}\n"
             f"Build date: {self._build_date}\n"
             f"{plugin_info}\n"
+            f"Server port: {getattr(self, '_server_port_info', '5000')}\n"
             f"Settings path: {self._settings_path}\n"
             f"Vencord path: {self._vencord_path}\n"
             f"© RenVencord"
@@ -3250,6 +3307,7 @@ class MainWindow(QMainWindow):
         dlg.exec()
 
     def _open_settings(self):
+        old_port = int(self._prefs.get("server_port", 5000))
         dlg = SettingsDialog(self._prefs, self)
         if dlg.exec() == QDialog.DialogCode.Accepted:
             self._prefs = dlg.get_prefs()
@@ -3259,6 +3317,15 @@ class MainWindow(QMainWindow):
                 self._prefs.get("stub_cleanup_days", 7)
             )
             self._last_quest_ids = []
+            new_port = int(self._prefs.get("server_port", 5000))
+            if new_port != old_port:
+                QMessageBox.information(
+                    self,
+                    "Server Port Changed",
+                    f"The server port has been changed to {new_port}.\n\n"
+                    "Please restart Adventurer for the port change to take effect.\n"
+                    "Make sure to update the Server Port setting in your Vencord plugin to match."
+                )
 
     def _open_updates_settings(self):
         dlg = UpdateSettingsDialog(self._prefs, self)
@@ -3370,4 +3437,14 @@ def run_gui():
 
 
 if __name__ == "__main__":
+    try:
+        import server
+        if not server.ensure_single_instance():
+            sys.exit(0)
+        port = server.get_configured_port()
+        import threading
+        t = threading.Thread(target=server._run_server_thread, args=(port,), daemon=True)
+        t.start()
+    except Exception:
+        pass
     run_gui()
