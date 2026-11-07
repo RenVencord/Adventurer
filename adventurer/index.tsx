@@ -2,7 +2,8 @@ import { definePluginSettings } from "@api/Settings";
 import definePlugin, { OptionType, PluginNative } from "@utils/types";
 import { FluxDispatcher, UserStore, React, RestAPI } from "@webpack/common";
 import { findStoreLazy, findByProps } from "@webpack";
-import { Button, showToast } from "@webpack/common";
+import { Button } from "@components/Button";
+import { showToast } from "@webpack/common";
 import { showNotification } from "@api/Notifications";
 
 import { buildCompletionMessage, buildCompletionScript, type CompletionQuestStatus } from "./experiences/completion";
@@ -3363,7 +3364,7 @@ export default definePlugin({
     settingsAboutComponent() {
         return (
             <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
-                <Button color={Button.Colors.BRAND} size={Button.Sizes.MEDIUM} onClick={fetchAndProcess}>
+                <Button onClick={fetchAndProcess}>
                     Fetch & Run Quests
                 </Button>
             </div>

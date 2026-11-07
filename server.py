@@ -532,7 +532,7 @@ def _is_quest_expired(quest: dict) -> bool:
         return False
 
 
-def get_first_queued_quest(user_id: str | None = None) -> dict | None:
+def get_queued_quests(user_id: str | None = None) -> list[dict]:
     state = server_state.get_state(user_id)
     quests = state.get("quests") or []
     skipped_ids = set(state.get("skipped_quest_ids") or [])
@@ -581,10 +581,10 @@ def get_first_queued_quest(user_id: str | None = None) -> dict | None:
         eligible.append((pct, exp_ts, q))
 
     if not eligible:
-        return None
+        return []
 
     eligible.sort(key=lambda item: (-item[0], item[1]))
-    return eligible[0][2]
+    return [item[2] for item in eligible]
 
 
 @app.route("/active", methods=["POST"])
@@ -636,38 +636,51 @@ def start():
     log.info(msg)
     server_state.log_event(msg, user_id)
 
-    first_quest = get_first_queued_quest(user_id)
-    if first_quest:
+    # Work down the queue until one quest actually launches. A quest whose app
+    # has no usable executable (e.g. verified through Steam) is skipped so it
+    # doesn't block the rest of the queue.
+    launched = False
+    for first_quest in get_queued_quests(user_id):
         app_id = get_quest_app_id(first_quest)
-        if app_id:
-            app_data = find_app(str(app_id))
-            if not app_data:
-                cfg = first_quest.get("config") or {}
-                app_name = (cfg.get("application") or {}).get("name")
-                if not app_name:
-                    tasks = (cfg.get("taskConfigV2") or {}).get("tasks") or {}
-                    for task_key in ["PLAY_ON_DESKTOP", "STREAM_ON_DESKTOP"]:
-                        task_apps = (tasks.get(task_key) or {}).get("applications") or []
-                        if task_apps and isinstance(task_apps, list) and len(task_apps) > 0:
-                            app_name = task_apps[0].get("name")
-                            if app_name:
-                                break
-                if not app_name:
-                    app_name = (cfg.get("messages") or {}).get("gameTitle")
-                if app_name:
-                    app_data = {"id": str(app_id), "name": app_name, "executables": []}
+        if not app_id:
+            continue
+        app_data = find_app(str(app_id))
+        if not app_data:
+            cfg = first_quest.get("config") or {}
+            app_name = (cfg.get("application") or {}).get("name")
+            if not app_name:
+                tasks = (cfg.get("taskConfigV2") or {}).get("tasks") or {}
+                for task_key in ["PLAY_ON_DESKTOP", "STREAM_ON_DESKTOP"]:
+                    task_apps = (tasks.get(task_key) or {}).get("applications") or []
+                    if task_apps and isinstance(task_apps, list) and len(task_apps) > 0:
+                        app_name = task_apps[0].get("name")
+                        if app_name:
+                            break
+            if not app_name:
+                app_name = (cfg.get("messages") or {}).get("gameTitle")
+            if app_name:
+                app_data = {"id": str(app_id), "name": app_name, "executables": []}
 
-            if app_data:
-                try:
-                    exe_path = ensure_executable(app_data, user_id)
-                    if exe_path:
-                        _kill_all_running()
-                        proc = launch_exe(exe_path.absolute())
-                        _running[str(app_id)] = proc
-                        server_state.set_active_quest(first_quest.get("id"), first_quest, "running", 0)
-                        server_state.log_event(f"Started quest: {server_state._get_quest_name(first_quest)}", user_id)
-                except Exception as e:
-                    log.error(f"Failed to launch first quest in queue: {e}")
+        if not app_data:
+            continue
+
+        try:
+            exe_path = ensure_executable(app_data, user_id)
+            if not exe_path:
+                server_state.log_event(f"No launchable executable for {server_state._get_quest_name(first_quest)} - trying next quest", user_id)
+                continue
+            _kill_all_running()
+            proc = launch_exe(exe_path.absolute())
+            _running[str(app_id)] = proc
+            server_state.set_active_quest(first_quest.get("id"), first_quest, "running", 0)
+            server_state.log_event(f"Started quest: {server_state._get_quest_name(first_quest)}", user_id)
+            launched = True
+        except Exception as e:
+            log.error(f"Failed to launch quest {server_state._get_quest_name(first_quest)}: {e}")
+            continue
+
+    if not launched:
+        server_state.log_event("No launchable game quest found", user_id)
 
     return jsonify({"status": "started"})
 
