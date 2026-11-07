@@ -439,3 +439,5 @@ old_versions
 convert_icon.py
 build_info.json
 scratch/
+stub
+stub.exe
