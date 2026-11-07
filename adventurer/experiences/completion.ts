@@ -403,7 +403,7 @@ function applyConfig(cfg) {
     S.bundled = loadProfiles(cfg && cfg.recipes, "bundled");
     S.local = loadProfiles(cfg && cfg.local, "local");
     S.quests = normalizeQuests(cfg && cfg.quests);
-    S.enabled = true;     // the script is only injected while the setting is on
+    S.enabled = cfg && typeof cfg.enabled === "boolean" ? cfg.enabled : true;
     S.invalid.forEach(function (reason) { noteOnce("invalid:" + reason, "ignored recipe: " + reason, "warn"); });
 }
 
@@ -1030,7 +1030,7 @@ function goalSighting() {
 
 // Called for every app event. Returns true when the event must be dropped.
 function onEvent(name) {
-    if (typeof name !== "string") return false;
+    if (!S.enabled || typeof name !== "string") return false;
     if (S.goals[name]) goalSighting();
     if (S.windowOpen && name !== S.goal) {
         var hit = findMatch([name], S.suppress);
@@ -1045,6 +1045,18 @@ function onEvent(name) {
 }
 
 // ---- hook ---------------------------------------------------------------------------------------------------------
+function unhook() {
+    if (S.hooked && S.app && S.origFire) {
+        if (S.app.fire === S.wrapperFire) {
+            S.app.fire = S.origFire;
+        }
+        S.hooked = false;
+    }
+    if (S.windowOpen) closeWindow();
+    S.pending = Object.create(null);
+    S.attempting = false;
+}
+
 function ensureHook() {
     if (S.hooked || !S.app || !S.enabled) return;
     if (!gate().open || candidateRecipes().length === 0) return;
@@ -1055,6 +1067,7 @@ function ensureHook() {
         return;
     }
     var wrapper = function (name) {
+        if (!S.enabled) return orig.apply(this, arguments);
         var drop = false;
         try { drop = onEvent(name); } catch (e) { note("event hook failed: " + msgOf(e), "warn"); }
         if (drop) return this;
@@ -1065,11 +1078,19 @@ function ensureHook() {
         noteOnce("nowrap", "could not wrap app.fire, events cannot be watched", "warn");
         return;
     }
+    S.origFire = orig;
+    S.wrapperFire = wrapper;
     S.hooked = true;
     note("watching app events: " + Object.keys(S.watch).join(", "), "info");
 }
 
 function reconcile() {
+    if (!S.enabled) {
+        unhook();
+        S.watch = Object.create(null);
+        S.goals = Object.create(null);
+        return;
+    }
     S.watch = Object.create(null);
     S.goals = Object.create(null);
     candidateRecipes().forEach(function (r) {
@@ -1140,9 +1161,15 @@ window.__adventurerCompletion = api;
 
 window.addEventListener("message", guarded("message handler", function (e) {
     var d = e && e.data;
-    if (!d || !d[TAG] || d.type !== "completion" || e.source !== window.parent) return;
-    S.enabled = !!d.enabled;
-    if (!S.enabled && S.windowOpen) closeWindow();
+    if (!d || !d[TAG] || (e.source !== window.parent && e.source !== window && (!window.top || e.source !== window.top))) return;
+    if (d.type === "completion" && typeof d.enabled === "boolean") {
+        S.enabled = d.enabled;
+    } else if (d.type === "menu_state" && typeof d.autoComplete === "boolean") {
+        S.enabled = d.autoComplete;
+    } else {
+        return;
+    }
+    if (!S.enabled) unhook();
     note("runner " + (S.enabled ? "enabled" : "disabled"));
     reconcile();
 }));

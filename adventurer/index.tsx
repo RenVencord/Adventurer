@@ -8,6 +8,7 @@ import { showNotification } from "@api/Notifications";
 
 import { buildCompletionMessage, buildCompletionScript, type CompletionQuestStatus } from "./experiences/completion";
 import { buildGraphScript } from "./experiences/graph";
+import { buildMenuMessage, buildMenuScript } from "./experiences/menu";
 import { buildMinimapMessage, buildMinimapScript } from "./experiences/minimap";
 import bundledRecipes from "./experiences/recipes.json";
 import { buildVolumeScript, pushVolume, VolumeControl } from "./experiences/volume";
@@ -1231,6 +1232,7 @@ function buildOverlayScript(): string {
     const SEE_THROUGH_WALLS = true;
     const state = {
         enabled: ${JSON.stringify(enabled)},
+        autoComplete: ${JSON.stringify(!!settings.store.experiencesAutoComplete)},
         colorDefault: new pc.Color(${primary[0]}, ${primary[1]}, ${primary[2]}),
         colorDim: new pc.Color(${secondary[0]}, ${secondary[1]}, ${secondary[2]}),
         colorHover: new pc.Color(${hover[0]}, ${hover[1]}, ${hover[2]})
@@ -1243,6 +1245,13 @@ function buildOverlayScript(): string {
             state.enabled = !!data.enabled;
             if (data.primary) state.colorDefault.set(data.primary[0], data.primary[1], data.primary[2]);
             if (data.secondary) state.colorDim.set(data.secondary[0], data.secondary[1], data.secondary[2]);
+        }
+        if (data.type === "completion") {
+            state.autoComplete = !!data.enabled;
+        }
+        if (data.type === "menu_state") {
+            if (typeof data.esp === "boolean") state.enabled = data.esp;
+            if (typeof data.autoComplete === "boolean") state.autoComplete = data.autoComplete;
         }
     });
 
@@ -1559,14 +1568,16 @@ function buildOverlayScript(): string {
 
         ctx.clearRect(0, 0, overlay.width, overlay.height);
 
-        ctx.fillStyle = hovered ? "#ffff00" : "#00ff00";
-        ctx.font = "bold 16px monospace";
-        ctx.fillText(hovered ? "Interactable!" : "Adventurer Injected!", 30, 50);
-        if (hovered && hovered.name) ctx.fillText(hovered.name, 30, 80);
+        if (hovered) {
+            ctx.fillStyle = "#ffff00";
+            ctx.font = "bold 16px monospace";
+            ctx.fillText("Interactable!", 30, 50);
+            if (hovered.name) ctx.fillText(hovered.name, 30, 80);
+        }
     });
 
     function forceInteractDeep(entity) {
-        if (!entity) return;
+        if (!state.autoComplete || !entity) return;
         entity.enabled = true;
         if (entity.collision) entity.collision.enabled = true;
 
@@ -1583,6 +1594,11 @@ function buildOverlayScript(): string {
                         const value = obj[key];
                         if (typeof value === "string" && value.length > 0) {
                             const k = key.toLowerCase();
+                            const val = value.toLowerCase();
+                            if (/(?:close|off|stop|disable|lock|cancel|fail|reset|exit|down)/i.test(k) ||
+                                /(?:close|off|stop|disable|lock|cancel|fail|reset|exit|down)/i.test(val)) {
+                                continue;
+                            }
                             if (value.includes(":") || k.includes("event") || k.includes("emit") || k.includes("trigger") || k.includes("success") || k.includes("unlock")) {
                                 app.fire(value);
                             }
@@ -1598,11 +1614,13 @@ function buildOverlayScript(): string {
                 if (instance.__attributes) scanForEvents(instance.__attributes, 0);
                 scanForEvents(instance, 0);
                 const coreMethods = ["execute", "onUse", "use", "activate", "click", "onInsert", "play"];
-                coreMethods.forEach(method => {
+                for (let m = 0; m < coreMethods.length; m++) {
+                    const method = coreMethods[m];
                     if (typeof instance[method] === "function") {
                         try { instance[method](); } catch (err) {}
+                        break;
                     }
-                });
+                }
             }
         }
         if (entity.children && entity.children.length > 0) {
@@ -1611,7 +1629,7 @@ function buildOverlayScript(): string {
     }
 
     window.addEventListener("mousedown", function (e) {
-        if (!state.enabled) return;
+        if (!state.autoComplete) return;
         if (e.button !== 0) return;
         if (!hovered) return;
         forceInteractDeep(hovered);
@@ -1645,6 +1663,11 @@ function buildInjectedScript(): string {
     if (settings.store.experiencesAutoComplete) {
         parts.push(buildCompletionScript({ recipes: bundledRecipes, quests: completionQuests() }));
     }
+    parts.push(buildMenuScript({
+        esp: !!settings.store.experiencesHack,
+        minimap: !!settings.store.experiencesMinimap,
+        autoComplete: !!settings.store.experiencesAutoComplete
+    }));
     return parts.join("\n;\n");
 }
 
@@ -1777,6 +1800,33 @@ async function startGameOverlay() {
     }
 }
 
+function pushMenuState() {
+    const message = buildMenuMessage({
+        esp: !!settings.store.experiencesHack,
+        minimap: !!settings.store.experiencesMinimap,
+        autoComplete: !!settings.store.experiencesAutoComplete
+    });
+    document.querySelectorAll("iframe").forEach(frame => {
+        try {
+            if (!/(^|\.)discordsays\.com$/i.test(new URL((frame as HTMLIFrameElement).src).hostname)) return;
+            (frame as HTMLIFrameElement).contentWindow?.postMessage(message, "*");
+        } catch { }
+    });
+}
+
+function handleExperienceToggle(e: MessageEvent) {
+    const d = e && e.data;
+    if (!d || !d.__adventurerExperienceToggle) return;
+    if (d.feature === "esp") {
+        settings.store.experiencesHack = !!d.enabled;
+    } else if (d.feature === "minimap") {
+        settings.store.experiencesMinimap = !!d.enabled;
+    } else if (d.feature === "autoComplete") {
+        settings.store.experiencesAutoComplete = !!d.enabled;
+    }
+    refreshInjectedScripts();
+}
+
 // Re-evaluates which injected parts are wanted after a settings change: re-bakes what future frames get and tells
 // the frames that are already running.
 async function refreshInjectedScripts() {
@@ -1786,6 +1836,7 @@ async function refreshInjectedScripts() {
     applyVolume();
     pushMinimap();
     pushCompletion();
+    pushMenuState();
 }
 
 // Sends the current volume to the running activity frames and refreshes what future frames start with.
@@ -3401,6 +3452,8 @@ export default definePlugin({
 
         startUIObserver();
 
+        window.addEventListener("message", handleExperienceToggle);
+
         scheduleNextHeartbeat(0);
     },
 
@@ -3432,6 +3485,7 @@ export default definePlugin({
         unpatchQuestVideo();
         stopGameOverlay();
         stopUIObserver();
+        window.removeEventListener("message", handleExperienceToggle);
 
         queue.length = 0;
         seen.clear();
