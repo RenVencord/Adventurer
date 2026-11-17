@@ -1,7 +1,7 @@
 import { definePluginSettings } from "@api/Settings";
 import definePlugin, { OptionType, PluginNative } from "@utils/types";
-import { FluxDispatcher, UserStore, React, RestAPI } from "@webpack/common";
-import { findStoreLazy, findByProps } from "@webpack";
+import { FluxDispatcher, UserStore, React, RestAPI, closeAllModals } from "@webpack/common";
+import { find, findStoreLazy, findByProps } from "@webpack";
 import { Button } from "@components/Button";
 import { showToast } from "@webpack/common";
 import { showNotification } from "@api/Notifications";
@@ -235,6 +235,14 @@ const settings = definePluginSettings({
                 value: VideoSelectorMode.Permissive
             }
         ]
+    },
+    videoMarathonMode: {
+        type: OptionType.BOOLEAN,
+        description: "Automatically start the next orb-reward video quest after the current quest video ends",
+        default: false,
+        onChange() {
+            syncVideoMarathonCheckboxes();
+        }
     },
     enableGameTracking: {
         type: OptionType.BOOLEAN,
@@ -856,6 +864,7 @@ function startUIObserver() {
     if (uiObserver) return;
 
     injectSkipStyles();
+    injectMarathonStyles();
 
     document.addEventListener("click", (e) => {
         const target = e.target as HTMLElement;
@@ -881,6 +890,17 @@ function startUIObserver() {
     }, true);
 
     uiObserver = new MutationObserver((mutations) => {
+        try {
+            const activeVideoDialog = document
+                .querySelector("[role='dialog'] [data-testid='discord-web-video-player-video']")
+                ?.closest("[role='dialog']");
+            if (activeVideoDialog && !activeVideoDialog.querySelector(`[${MARATHON_BAR_ATTR}]`)) {
+                injectVideoMarathonUI();
+            }
+        } catch (e) {
+            console.error("[Adventurer] Marathon UI injection error:", e);
+        }
+
         for (const mut of mutations) {
             for (const node of mut.addedNodes) {
                 if (node instanceof HTMLElement) {
@@ -902,6 +922,7 @@ function startUIObserver() {
     uiObserver.observe(document.body, { childList: true, subtree: true });
 
     document.querySelectorAll("article[id^='quest-tile-']").forEach(applySkipVisuals);
+    injectVideoMarathonUI();
 }
 
 function stopUIObserver() {
@@ -909,6 +930,7 @@ function stopUIObserver() {
     uiObserver.disconnect();
     uiObserver = null;
     removeSkipStyles();
+    removeMarathonStyles();
 }
 
 async function reportActiveStatus(questId: string | null, quest: any | null, statusData: { type: string; endsAt: number } | null) {
@@ -1206,6 +1228,7 @@ function startVideoObserver() {
             }
         }
         patchOverlayMessage();
+        injectVideoMarathonUI();
     });
 
     videoObserver.observe(document.body, {
@@ -1220,6 +1243,323 @@ function stopVideoObserver() {
     if (!videoObserver) return;
     videoObserver.disconnect();
     videoObserver = null;
+}
+
+// ---------------------------------------------------------------------------
+// Video Quest Marathon Mode
+// ---------------------------------------------------------------------------
+
+const MARATHON_STYLE_ID = "adventurer-video-marathon-styles";
+const MARATHON_BAR_ATTR = "data-adventurer-marathon-bar";
+
+let _marathonWatchedQuestId: string | null = null;
+let _marathonWasCompletedOnOpen = false;
+let _marathonAdvancedForQuestId: string | null = null;
+
+function injectMarathonStyles() {
+    if (document.getElementById(MARATHON_STYLE_ID)) return;
+    const style = document.createElement("style");
+    style.id = MARATHON_STYLE_ID;
+    style.textContent = `
+        [${MARATHON_BAR_ATTR}] {
+            display: inline-flex;
+            align-items: center;
+            flex-shrink: 0;
+            margin-right: 4px;
+        }
+        .adventurer-marathon-toggle {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            cursor: pointer;
+            user-select: none;
+            position: relative;
+            white-space: nowrap;
+            padding: 4px 6px;
+            border-radius: 8px;
+            transition: background-color 0.15s ease;
+        }
+        .adventurer-marathon-toggle:hover {
+            background-color: var(--background-mod-subtle, rgba(255, 255, 255, 0.06));
+        }
+        .adventurer-marathon-input {
+            position: absolute;
+            opacity: 0;
+            width: 20px;
+            height: 20px;
+            margin: 0;
+            cursor: pointer;
+        }
+        .adventurer-marathon-checkbox {
+            width: 20px;
+            height: 20px;
+            flex: 0 0 20px;
+            border-radius: 6px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            box-sizing: border-box;
+            background-color: var(--checkbox-background-default);
+            border: 1px solid var(--checkbox-border-default);
+            transition: background-color 0.15s ease, border-color 0.15s ease;
+        }
+        .adventurer-marathon-toggle:hover .adventurer-marathon-checkbox {
+            background-color: var(--checkbox-background-hover);
+            border-color: var(--checkbox-border-hover);
+        }
+        .adventurer-marathon-toggle[data-selected="true"] .adventurer-marathon-checkbox {
+            background-color: var(--checkbox-background-selected-default);
+            border-color: var(--checkbox-border-selected-default);
+        }
+        .adventurer-marathon-toggle[data-selected="true"]:hover .adventurer-marathon-checkbox {
+            background-color: var(--checkbox-background-selected-hover);
+            border-color: var(--checkbox-border-selected-hover);
+        }
+        .adventurer-marathon-input:focus-visible + .adventurer-marathon-checkbox {
+            outline: 2px solid var(--focus-primary, #00a8fc);
+            outline-offset: 2px;
+        }
+        .adventurer-marathon-check {
+            width: 14px;
+            height: 14px;
+            color: var(--checkbox-icon-active);
+            opacity: 0;
+            transform: scale(0.8);
+            transition: opacity 0.12s ease, transform 0.12s ease;
+        }
+        .adventurer-marathon-toggle[data-selected="true"] .adventurer-marathon-check {
+            opacity: 1;
+            transform: scale(1);
+        }
+        .adventurer-marathon-label {
+            color: var(--text-strong);
+            font-family: var(--font-primary);
+            font-size: 14px;
+            font-weight: 500;
+            line-height: 1.25;
+        }
+    `;
+    document.head.appendChild(style);
+}
+
+function removeMarathonStyles() {
+    document.getElementById(MARATHON_STYLE_ID)?.remove();
+    document.querySelectorAll(`[${MARATHON_BAR_ATTR}]`).forEach(el => el.remove());
+}
+
+function getCurrentModalQuestId(dialog: Element | null): string | null {
+    if (!dialog) return _lastClickedQuestId;
+    const questEl = dialog.querySelector("[data-quest-id]") as HTMLElement | null;
+    if (questEl?.dataset?.questId) return questEl.dataset.questId;
+
+    const img = dialog.querySelector("img[src*='/quests/']") as HTMLImageElement | null;
+    const match = img?.src?.match(/\/quests\/(\d+)\//);
+    if (match?.[1]) return match[1];
+
+    return _lastClickedQuestId;
+}
+
+function getEligibleOrbVideoQuests(excludeQuestId?: string | null): any[] {
+    const skipped = getSkippedQuests();
+    return getAllQuests().filter(q =>
+        q?.id &&
+        q.id !== excludeQuestId &&
+        !isQuestExpired(q) &&
+        !isQuestComplete(q) &&
+        !skipped.includes(q.id) &&
+        getQuestType(q) === QuestType.VIDEO &&
+        getOrbQuantity(q) > 0
+    );
+}
+
+function openVideoQuestModal(quest: any): boolean {
+    try {
+        const mod = find(
+            (m: any) =>
+                m &&
+                typeof m === "object" &&
+                Object.values(m).some(
+                    v => typeof v === "function" && String(v).includes("openStartClockTime") && String(v).includes("skipEnrollmentCheck")
+                )
+        );
+        const opener = mod
+            ? (Object.values(mod).find(
+                v => typeof v === "function" && String(v).includes("openStartClockTime") && String(v).includes("skipEnrollmentCheck")
+            ) as ((opts: any) => void) | undefined)
+            : undefined;
+
+        if (opener) {
+            const QuestContentEnum = findByProps("QUEST_HOME_DESKTOP");
+            const questContent = QuestContentEnum?.QUEST_HOME_DESKTOP ?? 0;
+            opener({
+                quest,
+                questContent,
+                sourceQuestContent: questContent,
+                sourceQuestContentCTA: "QUEST_HOME_TILE_HEADER_WATCH_VIDEO",
+                autoplay: true
+            });
+            return true;
+        }
+    } catch (e) {
+        console.warn("[Adventurer] Failed to open video quest modal via Webpack:", e);
+    }
+
+    const tilePlayBtn = document.querySelector(`article[id='quest-tile-${quest.id}'] [aria-label='Play']`) as HTMLElement | null;
+    if (tilePlayBtn) {
+        tilePlayBtn.click();
+        return true;
+    }
+
+    return false;
+}
+
+function formatMarathonSubtext(remainingCount: number): string {
+    if (remainingCount === 0) return "No other orb video quests remaining";
+    return `Auto-play next orb video quest (${remainingCount} remaining)`;
+}
+
+function syncVideoMarathonCheckboxes() {
+    const checked = !!settings.store.videoMarathonMode;
+    document.querySelectorAll(`[${MARATHON_BAR_ATTR}]`).forEach(bar => {
+        const dialog = bar.closest("[role='dialog']");
+        const currentQuestId = getCurrentModalQuestId(dialog);
+        const remaining = getEligibleOrbVideoQuests(currentQuestId).length;
+
+        const toggle = bar.querySelector(".adventurer-marathon-toggle") as HTMLElement | null;
+        const input = bar.querySelector(".adventurer-marathon-input") as HTMLInputElement | null;
+
+        if (toggle) {
+            toggle.setAttribute("data-selected", checked ? "true" : "false");
+            toggle.title = formatMarathonSubtext(remaining);
+        }
+        if (input) {
+            input.checked = checked;
+        }
+    });
+}
+
+function advanceMarathonToNextVideoQuest(currentQuestId?: string | null) {
+    if (!settings.store.videoMarathonMode) return;
+    if (currentQuestId && _marathonAdvancedForQuestId === currentQuestId) return;
+    if (currentQuestId) _marathonAdvancedForQuestId = currentQuestId;
+
+    const nextQuests = getEligibleOrbVideoQuests(currentQuestId);
+    if (nextQuests.length === 0) {
+        showToastSafe({
+            message: "Marathon Mode: No more orb video quests available.",
+            type: ToastType.SUCCESS,
+            id: toastGenId(),
+            options: { duration: 4000 }
+        });
+        return;
+    }
+
+    const nextQuest = nextQuests[0];
+    const questName = nextQuest?.config?.messages?.questName ?? nextQuest?.config?.messages?.gameTitle ?? nextQuest.id;
+    const orbs = getOrbQuantity(nextQuest);
+
+    showToastSafe({
+        message: `Marathon Mode: Starting ${questName} (${orbs.toLocaleString()} Orbs)...`,
+        type: ToastType.MESSAGE,
+        id: toastGenId(),
+        options: { duration: 3500 }
+    });
+
+    try {
+        closeAllModals();
+    } catch { }
+
+    setTimeout(() => {
+        if (!openVideoQuestModal(nextQuest)) {
+            console.warn("[Adventurer] Marathon Mode could not open next video quest:", nextQuest.id);
+        }
+    }, 300);
+}
+
+function checkMarathonQuestCompletion() {
+    if (!settings.store.videoMarathonMode) return;
+    if (!_marathonWatchedQuestId || _marathonWasCompletedOnOpen) return;
+    if (_marathonAdvancedForQuestId === _marathonWatchedQuestId) return;
+
+    const activeVideo = document.querySelector("[role='dialog'] [data-testid='discord-web-video-player-video']");
+    if (!activeVideo) return;
+
+    const quest = getAllQuests().find(q => q?.id === _marathonWatchedQuestId);
+    if (quest?.userStatus?.completedAt) {
+        advanceMarathonToNextVideoQuest(_marathonWatchedQuestId);
+    }
+}
+
+function injectVideoMarathonUI(videoEl?: HTMLVideoElement | null) {
+    const video = videoEl ?? findByTestId();
+    if (!video) return;
+
+    const dialog = video.closest("[role='dialog']");
+    const currentQuestId = getCurrentModalQuestId(dialog);
+
+    if (video.dataset.adventurerMarathonBound !== "1") {
+        video.dataset.adventurerMarathonBound = "1";
+        _marathonWatchedQuestId = currentQuestId;
+        const currentQuest = currentQuestId ? getAllQuests().find(q => q?.id === currentQuestId) : null;
+        _marathonWasCompletedOnOpen = !!currentQuest?.userStatus?.completedAt;
+        if (_marathonAdvancedForQuestId === currentQuestId) {
+            _marathonAdvancedForQuestId = null;
+        }
+
+        video.addEventListener("ended", () => {
+            if (video.dataset.adventurerMarathonHandled === "1") return;
+            video.dataset.adventurerMarathonHandled = "1";
+            const activeQuestId = getCurrentModalQuestId(video.closest("[role='dialog']")) ?? currentQuestId;
+            advanceMarathonToNextVideoQuest(activeQuestId);
+        });
+    }
+
+    const actions = dialog?.querySelector("[class*='actions_'], [class*='stackedActions_']");
+    if (!actions) {
+        if (video.isConnected) {
+            setTimeout(() => injectVideoMarathonUI(video), 150);
+        }
+        return;
+    }
+    if (actions.querySelector(`[${MARATHON_BAR_ATTR}]`)) return;
+
+    injectMarathonStyles();
+
+    const checked = !!settings.store.videoMarathonMode;
+    const remaining = getEligibleOrbVideoQuests(currentQuestId).length;
+
+    const bar = document.createElement("div");
+    bar.setAttribute(MARATHON_BAR_ATTR, "1");
+
+    const label = document.createElement("label");
+    label.className = "adventurer-marathon-toggle";
+    label.setAttribute("data-selected", checked ? "true" : "false");
+    label.title = formatMarathonSubtext(remaining);
+
+    const input = document.createElement("input");
+    input.type = "checkbox";
+    input.className = "adventurer-marathon-input";
+    input.checked = checked;
+    input.addEventListener("change", () => {
+        settings.store.videoMarathonMode = input.checked;
+        syncVideoMarathonCheckboxes();
+    });
+
+    const box = document.createElement("span");
+    box.className = "adventurer-marathon-checkbox";
+    box.setAttribute("aria-hidden", "true");
+    box.innerHTML = `<svg class="adventurer-marathon-check" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M5 12.5L9.5 17L19 7.5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+
+    const title = document.createElement("span");
+    title.className = "adventurer-marathon-label";
+    title.textContent = "Marathon Mode";
+
+    label.appendChild(input);
+    label.appendChild(box);
+    label.appendChild(title);
+    bar.appendChild(label);
+
+    actions.prepend(bar);
 }
 
 // ---------------------------------------------------------------------------
@@ -1817,6 +2157,7 @@ function scheduleQuestSync() {
             try { findStoreLazy("QuestStore")?.emitChange?.(); } catch (e) { }
         }
         syncCompletionQuests();
+        checkMarathonQuestCompletion();
     }, 300);
 }
 
