@@ -434,6 +434,8 @@ function getCurrentAvatarUrl(): string | null {
 let _lastHeartbeatQuestIds: string = "";
 let _prevAutoCompleteEnabled: boolean | null = null;
 let _heartbeatFailureCount = 0;
+let _lastPrioritySeq = 0;
+let _priorityQuestId: string | null = null;
 const SERVER_OFFLINE_ERROR = "Failed to find server — is it running?";
 
 function normalizeQuest(q: any): boolean {
@@ -981,13 +983,29 @@ async function sendHeartbeat(force = false) {
 
         if (res.ok) {
             const data = await res.json().catch(() => null);
-            if (data?.auto_complete_enabled === false && running) {
+            if (data?.priority_seq && data.priority_seq !== _lastPrioritySeq && data?.priority_quest_id) {
+                _lastPrioritySeq = data.priority_seq;
+                _priorityQuestId = String(data.priority_quest_id);
+                seen.delete(_priorityQuestId);
+                for (let i = queue.length - 1; i >= 0; i--) {
+                    if (queue[i]?.quest?.id === _priorityQuestId) {
+                        queue.splice(i, 1);
+                    }
+                }
+            }
+            if (data?.multi_stub_mode === true) {
+                if (running) {
+                    running = false;
+                    queue.length = 0;
+                    updateBar({ activeQuestName: null, forceKillVisible: false });
+                }
+            } else if (data?.auto_complete_enabled === false && running) {
                 running = false;
                 queue.length = 0;
                 stopGame(undefined, false);
                 updateBar({ activeQuestName: null, forceKillVisible: false });
             } else if (data?.auto_complete_enabled === true) {
-                if (_prevAutoCompleteEnabled === false || (!running && queue.length === 0)) {
+                if (_prevAutoCompleteEnabled === false || (!running && queue.length === 0) || _priorityQuestId) {
                     processQuests();
                 }
             }
@@ -1251,10 +1269,15 @@ function stopVideoObserver() {
 
 const MARATHON_STYLE_ID = "adventurer-video-marathon-styles";
 const MARATHON_BAR_ATTR = "data-adventurer-marathon-bar";
+const MARATHON_COUNTDOWN_ATTR = "data-adventurer-marathon-countdown";
+const MARATHON_COUNTDOWN_SECONDS = 4;
 
 let _marathonWatchedQuestId: string | null = null;
+let _marathonPendingQuestId: string | null = null;
 let _marathonWasCompletedOnOpen = false;
-let _marathonAdvancedForQuestId: string | null = null;
+const _marathonCompletedAdvancedIds = new Set<string>();
+let _marathonCountdownInterval: ReturnType<typeof setInterval> | null = null;
+let _marathonOpenTimeout: ReturnType<typeof setTimeout> | null = null;
 
 function injectMarathonStyles() {
     if (document.getElementById(MARATHON_STYLE_ID)) return;
@@ -1338,17 +1361,128 @@ function injectMarathonStyles() {
             font-weight: 500;
             line-height: 1.25;
         }
+        [${MARATHON_COUNTDOWN_ATTR}] {
+            position: absolute;
+            inset: 0;
+            z-index: 40;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: rgba(0, 0, 0, 0.62);
+            backdrop-filter: blur(4px);
+            padding: 16px;
+            box-sizing: border-box;
+        }
+        .adventurer-marathon-card {
+            background-color: var(--background-floating, #18191c);
+            border: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.12));
+            border-radius: 12px;
+            padding: 18px 22px;
+            width: min(340px, 90%);
+            box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            text-align: center;
+            gap: 10px;
+            font-family: var(--font-primary);
+        }
+        .adventurer-marathon-ring-wrap {
+            position: relative;
+            width: 52px;
+            height: 52px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .adventurer-marathon-ring-svg {
+            width: 52px;
+            height: 52px;
+            transform: rotate(-90deg);
+        }
+        .adventurer-marathon-ring-bg {
+            fill: none;
+            stroke: var(--background-mod-strong, rgba(255, 255, 255, 0.16));
+            stroke-width: 4;
+        }
+        .adventurer-marathon-ring-fg {
+            fill: none;
+            stroke: var(--brand-500, #5865f2);
+            stroke-width: 4;
+            stroke-linecap: round;
+            stroke-dasharray: 138.23;
+            stroke-dashoffset: 0;
+            transition: stroke-dashoffset 0.25s linear;
+        }
+        .adventurer-marathon-ring-icon {
+            position: absolute;
+            color: var(--text-strong, #fff);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .adventurer-marathon-eyebrow {
+            color: var(--text-subtle, #b5bac1);
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+        }
+        .adventurer-marathon-next-title {
+            color: var(--text-strong, #fff);
+            font-size: 15px;
+            font-weight: 600;
+            line-height: 1.3;
+            max-width: 100%;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .adventurer-marathon-next-orbs {
+            color: var(--text-subtle, #b5bac1);
+            font-size: 13px;
+            font-weight: 500;
+        }
+        .adventurer-marathon-card-actions {
+            display: flex;
+            gap: 10px;
+            width: 100%;
+            margin-top: 4px;
+        }
+        .adventurer-marathon-btn {
+            flex: 1;
+            height: 36px;
+            border-radius: 8px;
+            border: none;
+            font-family: var(--font-primary);
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: filter 0.12s ease, background-color 0.12s ease;
+        }
+        .adventurer-marathon-btn:hover {
+            filter: brightness(1.08);
+        }
+        .adventurer-marathon-btn-secondary {
+            background-color: var(--button-secondary-background, rgba(255, 255, 255, 0.12));
+            color: var(--text-strong, #fff);
+        }
+        .adventurer-marathon-btn-primary {
+            background-color: var(--brand-500, #5865f2);
+            color: var(--white, #fff);
+        }
     `;
     document.head.appendChild(style);
 }
 
 function removeMarathonStyles() {
+    cancelMarathonCountdown();
     document.getElementById(MARATHON_STYLE_ID)?.remove();
     document.querySelectorAll(`[${MARATHON_BAR_ATTR}]`).forEach(el => el.remove());
 }
 
 function getCurrentModalQuestId(dialog: Element | null): string | null {
-    if (!dialog) return _lastClickedQuestId;
+    if (!dialog) return _marathonPendingQuestId ?? _lastClickedQuestId;
     const questEl = dialog.querySelector("[data-quest-id]") as HTMLElement | null;
     if (questEl?.dataset?.questId) return questEl.dataset.questId;
 
@@ -1356,7 +1490,7 @@ function getCurrentModalQuestId(dialog: Element | null): string | null {
     const match = img?.src?.match(/\/quests\/(\d+)\//);
     if (match?.[1]) return match[1];
 
-    return _lastClickedQuestId;
+    return _marathonPendingQuestId ?? _lastClickedQuestId;
 }
 
 function getEligibleOrbVideoQuests(excludeQuestId?: string | null): any[] {
@@ -1373,6 +1507,9 @@ function getEligibleOrbVideoQuests(excludeQuestId?: string | null): any[] {
 }
 
 function openVideoQuestModal(quest: any): boolean {
+    _lastClickedQuestId = quest?.id ?? _lastClickedQuestId;
+    _marathonPendingQuestId = quest?.id ?? null;
+
     try {
         const mod = find(
             (m: any) =>
@@ -1389,13 +1526,17 @@ function openVideoQuestModal(quest: any): boolean {
             : undefined;
 
         if (opener) {
-            const QuestContentEnum = findByProps("QUEST_HOME_DESKTOP");
-            const questContent = QuestContentEnum?.QUEST_HOME_DESKTOP ?? 0;
+            const QuestContentEnum = find(
+                (m: any) => m && typeof m === "object" && typeof m.QUEST_HOME_DESKTOP === "number"
+            );
+            const questContent = QuestContentEnum?.QUEST_HOME_DESKTOP ?? 11;
+            const ctaEnum = findByProps("QUEST_HOME_TILE_HEADER_WATCH_VIDEO");
+            const sourceQuestContentCTA = ctaEnum?.QUEST_HOME_TILE_HEADER_WATCH_VIDEO ?? "QUEST_HOME_TILE_HEADER_WATCH_VIDEO";
             opener({
                 quest,
                 questContent,
                 sourceQuestContent: questContent,
-                sourceQuestContentCTA: "QUEST_HOME_TILE_HEADER_WATCH_VIDEO",
+                sourceQuestContentCTA,
                 autoplay: true
             });
             return true;
@@ -1438,10 +1579,49 @@ function syncVideoMarathonCheckboxes() {
     });
 }
 
+function cancelMarathonCountdown() {
+    if (_marathonCountdownInterval) {
+        clearInterval(_marathonCountdownInterval);
+        _marathonCountdownInterval = null;
+    }
+    if (_marathonOpenTimeout) {
+        clearTimeout(_marathonOpenTimeout);
+        _marathonOpenTimeout = null;
+    }
+    document.querySelectorAll(`[${MARATHON_COUNTDOWN_ATTR}]`).forEach(el => el.remove());
+}
+
+function executeMarathonAdvance(nextQuest: any) {
+    cancelMarathonCountdown();
+    if (!settings.store.videoMarathonMode) return;
+
+    const questName = nextQuest?.config?.messages?.questName ?? nextQuest?.config?.messages?.gameTitle ?? nextQuest.id;
+    const orbs = getOrbQuantity(nextQuest);
+
+    showToastSafe({
+        message: `Marathon Mode: Starting ${questName} (${orbs.toLocaleString()} Orbs)...`,
+        type: ToastType.MESSAGE,
+        id: toastGenId(),
+        options: { duration: 3500 }
+    });
+
+    try {
+        closeAllModals();
+    } catch { }
+
+    _marathonOpenTimeout = setTimeout(() => {
+        _marathonOpenTimeout = null;
+        if (!openVideoQuestModal(nextQuest)) {
+            console.warn("[Adventurer] Marathon Mode could not open next video quest:", nextQuest.id);
+        }
+    }, 350);
+}
+
 function advanceMarathonToNextVideoQuest(currentQuestId?: string | null) {
     if (!settings.store.videoMarathonMode) return;
-    if (currentQuestId && _marathonAdvancedForQuestId === currentQuestId) return;
-    if (currentQuestId) _marathonAdvancedForQuestId = currentQuestId;
+    if (currentQuestId && _marathonCompletedAdvancedIds.has(currentQuestId)) return;
+    if (_marathonCountdownInterval || _marathonOpenTimeout) return;
+    if (currentQuestId) _marathonCompletedAdvancedIds.add(currentQuestId);
 
     const nextQuests = getEligibleOrbVideoQuests(currentQuestId);
     if (nextQuests.length === 0) {
@@ -1458,28 +1638,106 @@ function advanceMarathonToNextVideoQuest(currentQuestId?: string | null) {
     const questName = nextQuest?.config?.messages?.questName ?? nextQuest?.config?.messages?.gameTitle ?? nextQuest.id;
     const orbs = getOrbQuantity(nextQuest);
 
-    showToastSafe({
-        message: `Marathon Mode: Starting ${questName} (${orbs.toLocaleString()} Orbs)...`,
-        type: ToastType.MESSAGE,
-        id: toastGenId(),
-        options: { duration: 3500 }
+    const playerContainer = document.querySelector("[role='dialog'] [data-testid='discord-web-video-player-container']");
+    if (!playerContainer) {
+        executeMarathonAdvance(nextQuest);
+        return;
+    }
+
+    cancelMarathonCountdown();
+
+    const overlay = document.createElement("div");
+    overlay.setAttribute(MARATHON_COUNTDOWN_ATTR, "1");
+    overlay.addEventListener("click", (e) => e.stopPropagation());
+
+    const card = document.createElement("div");
+    card.className = "adventurer-marathon-card";
+
+    const eyebrow = document.createElement("div");
+    eyebrow.className = "adventurer-marathon-eyebrow";
+    eyebrow.textContent = `Up Next in ${MARATHON_COUNTDOWN_SECONDS}s`;
+
+    const ringWrap = document.createElement("div");
+    ringWrap.className = "adventurer-marathon-ring-wrap";
+    ringWrap.innerHTML = `
+        <svg class="adventurer-marathon-ring-svg" viewBox="0 0 52 52">
+            <circle class="adventurer-marathon-ring-bg" cx="26" cy="26" r="22"></circle>
+            <circle class="adventurer-marathon-ring-fg" cx="26" cy="26" r="22"></circle>
+        </svg>
+        <span class="adventurer-marathon-ring-icon" aria-hidden="true">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M8.5 5.14v14l11-7-11-7z"></path>
+            </svg>
+        </span>
+    `;
+
+    const titleEl = document.createElement("div");
+    titleEl.className = "adventurer-marathon-next-title";
+    titleEl.textContent = questName;
+    titleEl.title = questName;
+
+    const orbsEl = document.createElement("div");
+    orbsEl.className = "adventurer-marathon-next-orbs";
+    orbsEl.textContent = `◇ ${orbs.toLocaleString()} Orbs`;
+
+    const btnRow = document.createElement("div");
+    btnRow.className = "adventurer-marathon-card-actions";
+
+    const cancelBtn = document.createElement("button");
+    cancelBtn.type = "button";
+    cancelBtn.className = "adventurer-marathon-btn adventurer-marathon-btn-secondary";
+    cancelBtn.textContent = "Cancel";
+    cancelBtn.addEventListener("click", () => {
+        cancelMarathonCountdown();
     });
 
-    try {
-        closeAllModals();
-    } catch { }
+    const playNowBtn = document.createElement("button");
+    playNowBtn.type = "button";
+    playNowBtn.className = "adventurer-marathon-btn adventurer-marathon-btn-primary";
+    playNowBtn.textContent = "Play Now";
+    playNowBtn.addEventListener("click", () => {
+        executeMarathonAdvance(nextQuest);
+    });
 
-    setTimeout(() => {
-        if (!openVideoQuestModal(nextQuest)) {
-            console.warn("[Adventurer] Marathon Mode could not open next video quest:", nextQuest.id);
+    btnRow.appendChild(cancelBtn);
+    btnRow.appendChild(playNowBtn);
+
+    card.appendChild(eyebrow);
+    card.appendChild(ringWrap);
+    card.appendChild(titleEl);
+    card.appendChild(orbsEl);
+    card.appendChild(btnRow);
+    overlay.appendChild(card);
+    playerContainer.appendChild(overlay);
+
+    const ringFg = ringWrap.querySelector(".adventurer-marathon-ring-fg") as SVGCircleElement | null;
+    const totalMs = MARATHON_COUNTDOWN_SECONDS * 1000;
+    const circumference = 138.23;
+    const startedAt = Date.now();
+
+    _marathonCountdownInterval = setInterval(() => {
+        if (!overlay.isConnected || !settings.store.videoMarathonMode) {
+            cancelMarathonCountdown();
+            return;
         }
-    }, 300);
+        const elapsed = Date.now() - startedAt;
+        const remainingMs = Math.max(0, totalMs - elapsed);
+        const remainingSec = Math.ceil(remainingMs / 1000);
+        eyebrow.textContent = remainingSec > 0 ? `Up Next in ${remainingSec}s` : "Starting...";
+        if (ringFg) {
+            const progress = Math.min(1, elapsed / totalMs);
+            ringFg.style.strokeDashoffset = String(circumference * progress);
+        }
+        if (remainingMs <= 0) {
+            executeMarathonAdvance(nextQuest);
+        }
+    }, 100);
 }
 
 function checkMarathonQuestCompletion() {
     if (!settings.store.videoMarathonMode) return;
     if (!_marathonWatchedQuestId || _marathonWasCompletedOnOpen) return;
-    if (_marathonAdvancedForQuestId === _marathonWatchedQuestId) return;
+    if (_marathonCompletedAdvancedIds.has(_marathonWatchedQuestId)) return;
 
     const activeVideo = document.querySelector("[role='dialog'] [data-testid='discord-web-video-player-video']");
     if (!activeVideo) return;
@@ -1500,11 +1758,9 @@ function injectVideoMarathonUI(videoEl?: HTMLVideoElement | null) {
     if (video.dataset.adventurerMarathonBound !== "1") {
         video.dataset.adventurerMarathonBound = "1";
         _marathonWatchedQuestId = currentQuestId;
+        _marathonPendingQuestId = null;
         const currentQuest = currentQuestId ? getAllQuests().find(q => q?.id === currentQuestId) : null;
         _marathonWasCompletedOnOpen = !!currentQuest?.userStatus?.completedAt;
-        if (_marathonAdvancedForQuestId === currentQuestId) {
-            _marathonAdvancedForQuestId = null;
-        }
 
         video.addEventListener("ended", () => {
             if (video.dataset.adventurerMarathonHandled === "1") return;
@@ -3121,7 +3377,13 @@ async function processQuests(): Promise<void> {
         if (!settings.store.enableGameTracking) continue;
 
         console.log(`[Adventurer] QUEUED GAME QUEST: ${questName} (appId=${appId})`);
-        queue.push({ quest, appId, questName, task });
+        const item = { quest, appId, questName, task };
+        if (_priorityQuestId && quest.id === _priorityQuestId) {
+            queue.unshift(item);
+            _priorityQuestId = null;
+        } else {
+            queue.push(item);
+        }
         seen.add(quest.id);
         newlyQueued++;
     }
@@ -4013,6 +4275,11 @@ export default definePlugin({
 
         stopVideoObserver();
         unpatchQuestVideo();
+        cancelMarathonCountdown();
+        _marathonWatchedQuestId = null;
+        _marathonPendingQuestId = null;
+        _marathonWasCompletedOnOpen = false;
+        _marathonCompletedAdvancedIds.clear();
         stopGameOverlay();
         stopUIObserver();
         removeForwardModalDOMObserver();
