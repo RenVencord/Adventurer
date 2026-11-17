@@ -18,7 +18,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, QTimer, QThread, pyqtSignal, QSize, QRect, QByteArray, QBuffer, QIODevice
 from PyQt6.QtGui import (
     QPixmap, QPainter, QColor, QPen, QBrush, QLinearGradient,
-    QIcon, QPainterPath, QAction, QConicalGradient
+    QIcon, QPainterPath, QAction, QConicalGradient, QImageReader, QMovie
 )
 from PyQt6.QtSvg import QSvgRenderer
 
@@ -495,6 +495,45 @@ class ImageLoader(QThread):
         pm = fetch_pixmap(self.url, self.size)
         if pm:
             self.loaded.emit(self.url, pm)
+
+
+class AvatarLoader(QThread):
+    """Fetches a user avatar and emits either a static QPixmap or raw animated bytes."""
+
+    loaded_static = pyqtSignal(str, QPixmap)
+    loaded_animated = pyqtSignal(str, bytes, bytes)
+
+    def __init__(self, url: str, size: QSize):
+        super().__init__()
+        self.url = url
+        self.size = size
+
+    def run(self):
+        try:
+            req = urllib.request.Request(self.url, headers={"User-Agent": "AdventurerGUI/1.0"})
+            with urllib.request.urlopen(req, timeout=8) as r:
+                data = r.read()
+        except Exception:
+            return
+
+        ba = QByteArray(data)
+        buf = QBuffer(ba)
+        buf.open(QIODevice.OpenModeFlag.ReadOnly)
+        reader = QImageReader(buf)
+        fmt = bytes(reader.format())
+        if reader.supportsAnimation() and reader.imageCount() > 1 and fmt:
+            self.loaded_animated.emit(self.url, data, fmt)
+            return
+
+        pm = QPixmap()
+        pm.loadFromData(data)
+        if not pm.isNull():
+            scaled = pm.scaled(
+                self.size,
+                Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+            self.loaded_static.emit(self.url, scaled)
 
 
 class RingWidget(QWidget):
@@ -2253,22 +2292,26 @@ class AboutDialog(QDialog):
         )
         text_col.addWidget(build_lbl)
 
-        # 3. Plugin version (or Loaded / Downloaded if update downloaded and Discord restart needed)
+        # 3. Plugin version (always show Loaded and Downloaded versions)
         plugin_lbl = QLabel()
         plugin_lbl.setTextFormat(Qt.TextFormat.RichText)
+        loaded_text = self._loaded_plugin_version or "Not connected"
+        loaded_color = TEXT_PRIMARY.name() if self._loaded_plugin_version else TEXT_MUTED.name()
         if self._needs_plugin_restart:
-            plugin_lbl.setText(
-                f"<span style='color: {TEXT_MUTED.name()}; font-size: 12px;'>Loaded plugin version:</span> "
-                f"<span style='color: {TEXT_PRIMARY.name()}; font-size: 12px;'>{self._loaded_plugin_version}</span><br>"
-                f"<span style='color: {TEXT_MUTED.name()}; font-size: 12px;'>Downloaded plugin version:</span> "
+            downloaded_html = (
                 f"<span style='color: {ACCENT_GREEN.name()}; font-size: 12px; font-weight: 600;'>{self._downloaded_plugin_version}</span> "
                 f"<span style='color: {ACCENT_GOLD.name()}; font-size: 11px; font-weight: 600;'>(restart Discord)</span>"
             )
         else:
-            plugin_lbl.setText(
-                f"<span style='color: {TEXT_MUTED.name()}; font-size: 12px;'>Plugin version:</span> "
+            downloaded_html = (
                 f"<span style='color: {TEXT_PRIMARY.name()}; font-size: 12px;'>{self._downloaded_plugin_version}</span>"
             )
+        plugin_lbl.setText(
+            f"<span style='color: {TEXT_MUTED.name()}; font-size: 12px;'>Loaded plugin version:</span> "
+            f"<span style='color: {loaded_color}; font-size: 12px;'>{loaded_text}</span><br>"
+            f"<span style='color: {TEXT_MUTED.name()}; font-size: 12px;'>Downloaded plugin version:</span> "
+            f"{downloaded_html}"
+        )
         text_col.addWidget(plugin_lbl)
 
         def wrap_chars(text: str) -> str:
@@ -2379,13 +2422,15 @@ class AboutDialog(QDialog):
         root_layout.addLayout(btn_layout)
 
     def _on_copy(self):
+        loaded_text = self._loaded_plugin_version or "Not connected"
         if self._needs_plugin_restart:
-            plugin_info = (
-                f"Loaded plugin version: {self._loaded_plugin_version}\n"
-                f"Downloaded plugin version: {self._downloaded_plugin_version} (restart Discord)"
-            )
+            downloaded_text = f"{self._downloaded_plugin_version} (restart Discord)"
         else:
-            plugin_info = f"Plugin version: {self._downloaded_plugin_version}"
+            downloaded_text = self._downloaded_plugin_version
+        plugin_info = (
+            f"Loaded plugin version: {loaded_text}\n"
+            f"Downloaded plugin version: {downloaded_text}"
+        )
 
         info = (
             f"Adventurer {self._version}\n"
@@ -2742,9 +2787,14 @@ class UserAvatarButton(QToolButton):
             }}
         """)
         self.setMenu(self._menu)
+        self._menu.aboutToShow.connect(self._on_menu_about_to_show)
+        self._menu.aboutToHide.connect(self._on_menu_about_to_hide)
         self._set_placeholder()
-        self._avatar_loaders: list[ImageLoader] = []
+        self._selected_id: str | None = None
+        self._avatar_loaders: list[AvatarLoader] = []
         self._avatar_cache: dict[str, QPixmap] = {}
+        self._avatar_urls: dict[str, str] = {}
+        self._animated_avatars: dict[str, dict] = {}
         self._item_widgets: dict[str, UserMenuItemWidget] = {}
 
     def _set_placeholder(self):
@@ -2759,8 +2809,51 @@ class UserAvatarButton(QToolButton):
         self.setIcon(QIcon(pm))
         self.setIconSize(QSize(26, 26))
 
+    def _on_menu_about_to_show(self):
+        for uid, entry in self._animated_avatars.items():
+            if uid in self._item_widgets and uid in self._avatar_cache:
+                self._item_widgets[uid].set_avatar(self._avatar_cache[uid])
+            entry["movie"].start()
+
+    def _on_menu_about_to_hide(self):
+        for uid, entry in self._animated_avatars.items():
+            if uid != self._selected_id:
+                entry["movie"].stop()
+
+    def _clear_animated_avatar(self, user_id: str):
+        entry = self._animated_avatars.pop(user_id, None)
+        if entry:
+            entry["movie"].stop()
+            entry["movie"].deleteLater()
+            entry["buf"].close()
+
+    def _on_movie_frame(self, user_id: str, frame_idx: int):
+        entry = self._animated_avatars.get(user_id)
+        if not entry:
+            return
+        frames = entry["frames"]
+        circ = frames.get(frame_idx)
+        if circ is None:
+            pm = entry["movie"].currentPixmap()
+            if pm.isNull():
+                return
+            scaled = pm.scaled(
+                QSize(26, 26),
+                Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+            circ = make_circle_pixmap(scaled, 26)
+            frames[frame_idx] = circ
+        self._avatar_cache[user_id] = circ
+        if user_id == self._selected_id:
+            self.setIcon(QIcon(circ))
+            self.setIconSize(QSize(26, 26))
+        if self._menu.isVisible() and user_id in self._item_widgets:
+            self._item_widgets[user_id].set_avatar(circ)
+
     def update_users(self, users: dict[str, dict], selected_id: str | None,
                      on_select):
+        self._selected_id = selected_id
         self._menu.clear()
         self._item_widgets.clear()
 
@@ -2786,6 +2879,11 @@ class UserAvatarButton(QToolButton):
                 except (ValueError, TypeError):
                     avatar_url = "https://cdn.discordapp.com/embed/avatars/0.png"
 
+            if self._avatar_urls.get(uid) != avatar_url:
+                self._avatar_urls[uid] = avatar_url
+                self._avatar_cache.pop(uid, None)
+                self._clear_animated_avatar(uid)
+
             cached_pm = self._avatar_cache.get(uid)
             item_widget = UserMenuItemWidget(uid, username, is_selected, cached_pm, self._menu)
             item_widget.setMinimumWidth(min_w)
@@ -2801,28 +2899,70 @@ class UserAvatarButton(QToolButton):
             item_widget.clicked.connect(on_item_clicked)
 
             if not cached_pm and avatar_url:
-                self._load_avatar(uid, avatar_url, item_widget)
+                self._load_avatar(uid, avatar_url)
 
             self._menu.addAction(action)
+
+        for uid, entry in self._animated_avatars.items():
+            if uid == selected_id or self._menu.isVisible():
+                entry["movie"].start()
+            else:
+                entry["movie"].stop()
 
         if selected_id and selected_id in self._avatar_cache:
             self.setIcon(QIcon(self._avatar_cache[selected_id]))
             self.setIconSize(QSize(26, 26))
+        else:
+            self._set_placeholder()
 
-    def _load_avatar(self, user_id: str, url: str, item_widget: UserMenuItemWidget):
-        loader = ImageLoader(url, QSize(24, 24))
+    def _load_avatar(self, user_id: str, url: str):
+        loader = AvatarLoader(url, QSize(26, 26))
         self._avatar_loaders.append(loader)
 
-        def on_loaded(_url: str, pm: QPixmap):
-            circular = make_circle_pixmap(pm, 24)
-            self._avatar_cache[user_id] = circular
-            if user_id in self._item_widgets:
-                self._item_widgets[user_id].set_avatar(circular)
+        def _cleanup_loader():
             loader.deleteLater()
             if loader in self._avatar_loaders:
                 self._avatar_loaders.remove(loader)
 
-        loader.loaded.connect(on_loaded)
+        def on_loaded_static(_url: str, pm: QPixmap):
+            if self._avatar_urls.get(user_id) == _url:
+                circular = make_circle_pixmap(pm, 26)
+                self._avatar_cache[user_id] = circular
+                if user_id in self._item_widgets:
+                    self._item_widgets[user_id].set_avatar(circular)
+                if user_id == self._selected_id:
+                    self.setIcon(QIcon(circular))
+                    self.setIconSize(QSize(26, 26))
+            _cleanup_loader()
+
+        def on_loaded_animated(_url: str, data: bytes, fmt: bytes):
+            if self._avatar_urls.get(user_id) == _url:
+                self._clear_animated_avatar(user_id)
+                ba = QByteArray(data)
+                buf = QBuffer(ba)
+                buf.open(QIODevice.OpenModeFlag.ReadOnly)
+                movie = QMovie(buf, fmt, self)
+                if movie.isValid():
+                    self._animated_avatars[user_id] = {
+                        "ba": ba,
+                        "buf": buf,
+                        "movie": movie,
+                        "frames": {},
+                    }
+                    movie.frameChanged.connect(lambda idx, uid=user_id: self._on_movie_frame(uid, idx))
+                    movie.jumpToFrame(0)
+                    self._on_movie_frame(user_id, 0)
+                    if user_id in self._item_widgets and user_id in self._avatar_cache:
+                        self._item_widgets[user_id].set_avatar(self._avatar_cache[user_id])
+                    if user_id == self._selected_id or self._menu.isVisible():
+                        movie.start()
+                else:
+                    buf.close()
+            _cleanup_loader()
+
+        loader.loaded_static.connect(on_loaded_static)
+        loader.loaded_animated.connect(on_loaded_animated)
+        loader.finished.connect(_cleanup_loader)
         loader.start()
 
 
@@ -3220,9 +3360,14 @@ class MainWindow(QMainWindow):
             users = server_state.get_users()
             selected_id = server_state.get_selected_user_id()
             user_ids = sorted(users.keys())
+            user_sig = (
+                selected_id,
+                tuple((uid, users[uid].get("username"), users[uid].get("avatar")) for uid in user_ids),
+            )
 
-            if user_ids != self._last_user_ids:
+            if user_ids != self._last_user_ids or user_sig != getattr(self, "_last_user_sig", None):
                 self._last_user_ids = user_ids
+                self._last_user_sig = user_sig
                 if len(users) > 1:
                     self._user_btn.show()
                     self._user_btn.update_users(users, selected_id, self._on_select_user)

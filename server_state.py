@@ -1,3 +1,4 @@
+import re
 import threading
 from collections import deque
 from datetime import datetime
@@ -113,10 +114,14 @@ def _resolve_avatar_url(user_id: str, avatar: str | None) -> str:
             idx = 0
         return f"https://cdn.discordapp.com/embed/avatars/{idx}.png"
     if avatar.startswith("http://") or avatar.startswith("https://"):
-        return avatar
-    if avatar.startswith("/"):
-        return f"https://discord.com{avatar}"
-    return f"https://discord.com/{avatar}"
+        url = avatar
+    elif avatar.startswith("/"):
+        url = f"https://discord.com{avatar}"
+    else:
+        url = f"https://discord.com/{avatar}"
+    if "/a_" in url and "animated=" not in url:
+        url = re.sub(r"(/a_[^/?]+)\.(?:png|webp)(?=$|\?)", r"\1.gif", url, flags=re.IGNORECASE)
+    return url
 
 
 def _get_or_create_user(user_id: str, username: str, avatar: str | None) -> tuple[dict, bool]:
