@@ -14,6 +14,12 @@ _active_quest: dict | None = None
 _active_status_type: str | None = None
 _active_ends_at: int = 0
 
+_running_quests: dict[tuple[str, str], dict] = {}
+_multi_stub_mode: bool = False
+_priority_quest_id: str | None = None
+_priority_user_id: str | None = None
+_priority_seq: int = 0
+
 _auto_complete_enabled: bool = True
 _skipped_quest_ids: set[str] = set()
 
@@ -326,6 +332,8 @@ def get_state(user_id: str | None = None) -> dict:
             "active_quest": _active_quest,
             "active_status_type": _active_status_type,
             "active_ends_at": _active_ends_at,
+            "running_quests": get_running_quests(uid),
+            "multi_stub_mode": _multi_stub_mode,
             "auto_complete_enabled": _auto_complete_enabled,
             "skipped_quest_ids": list(_skipped_quest_ids),
             "last_heartbeat": u["last_heartbeat_time"] if u else None,
@@ -385,6 +393,91 @@ def set_active_quest(quest_id: str | None, quest_obj: dict | None, status_type: 
 def get_active_quest() -> tuple[str | None, dict | None]:
     with _lock:
         return _active_quest_id, _active_quest
+
+
+def add_running_quest(
+    quest_id: str,
+    quest_obj: dict | None,
+    app_id: str | None = None,
+    status_type: str | None = "running",
+    ends_at: int = 0,
+    user_id: str | None = None,
+):
+    if not quest_id:
+        return
+    qid = str(quest_id)
+    uid_str = str(user_id) if user_id else ""
+    with _lock:
+        _running_quests[(uid_str, qid)] = {
+            "quest_id": qid,
+            "user_id": str(user_id) if user_id else None,
+            "quest": quest_obj,
+            "app_id": str(app_id) if app_id else None,
+            "status_type": status_type or "running",
+            "ends_at": ends_at,
+        }
+        stats_manager.mark_quest_assisted(qid)
+
+
+def remove_running_quest(quest_id: str, user_id: str | None = None):
+    if not quest_id:
+        return
+    qid = str(quest_id)
+    with _lock:
+        if user_id is not None:
+            _running_quests.pop((str(user_id), qid), None)
+            _running_quests.pop(("", qid), None)
+        else:
+            for key in [k for k in _running_quests if k[1] == qid]:
+                _running_quests.pop(key, None)
+
+
+def clear_running_quests():
+    with _lock:
+        _running_quests.clear()
+
+
+def get_running_quests(user_id: str | None = None) -> dict[str, dict]:
+    uid_str = str(user_id) if user_id else None
+    with _lock:
+        result = {}
+        for (k_uid, qid), info in _running_quests.items():
+            if uid_str is not None and k_uid not in (uid_str, ""):
+                continue
+            result[qid] = dict(info)
+        return result
+
+
+def get_all_running_entries() -> list[dict]:
+    with _lock:
+        return [dict(info) for info in _running_quests.values()]
+
+
+def set_multi_stub_mode(enabled: bool):
+    global _multi_stub_mode
+    with _lock:
+        _multi_stub_mode = bool(enabled)
+
+
+def is_multi_stub_mode() -> bool:
+    with _lock:
+        return _multi_stub_mode
+
+
+def set_priority_quest(quest_id: str | None, user_id: str | None = None):
+    global _priority_quest_id, _priority_user_id, _priority_seq
+    with _lock:
+        _priority_quest_id = str(quest_id) if quest_id else None
+        _priority_user_id = str(user_id) if user_id else None
+        if _priority_quest_id:
+            _priority_seq += 1
+
+
+def get_priority_quest(user_id: str | None = None) -> tuple[str | None, int]:
+    with _lock:
+        if user_id is not None and _priority_user_id is not None and str(user_id) != _priority_user_id:
+            return None, 0
+        return _priority_quest_id, _priority_seq
 
 
 def set_auto_complete_enabled(enabled: bool):

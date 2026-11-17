@@ -1,6 +1,7 @@
 import os
 import sys
 import time
+import threading
 import urllib.request
 import traceback
 import json
@@ -12,7 +13,7 @@ from PyQt6.QtWidgets import (
     QLabel, QScrollArea, QFrame, QSystemTrayIcon, QMenu, QSizePolicy,
     QDialog, QCheckBox, QSpinBox, QFormLayout, QDialogButtonBox,
     QTabWidget, QPlainTextEdit, QToolButton, QComboBox, QLineEdit,
-    QPushButton, QFileDialog, QWidgetAction, QMessageBox, QGroupBox, QListView
+    QPushButton, QFileDialog, QWidgetAction, QMessageBox, QGroupBox, QListView, QProgressBar
 )
 from PyQt6.QtCore import Qt, QTimer, QThread, pyqtSignal, QSize, QRect, QByteArray, QBuffer, QIODevice
 from PyQt6.QtGui import (
@@ -585,21 +586,29 @@ class HeroBanner(QWidget):
 
 
 class QuestCard(QFrame):
-    def __init__(self, quest: dict, tag: str = "", tag_color: str = "", show_expiry: bool = False, parent=None):
+    start_now_clicked = pyqtSignal(str)
+    launch_parallel_clicked = pyqtSignal(str)
+    stop_stub_clicked = pyqtSignal(str)
+
+    def __init__(
+        self,
+        quest: dict,
+        tag: str = "",
+        tag_color: str = "",
+        show_expiry: bool = False,
+        show_queue_controls: bool = False,
+        parent=None,
+    ):
         super().__init__(parent)
         self.quest = quest
         self._show_expiry = show_expiry
+        self._show_queue_controls = show_queue_controls
+        self._is_running = False
         self._loader: ImageLoader | None = None
 
-        self.setFixedHeight(90)
+        self.setFixedHeight(96 if show_queue_controls else 90)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        self.setStyleSheet(f"""
-            QuestCard {{
-                background: {BG_CARD.name()};
-                border: 1px solid {BORDER.name()};
-                border-radius: 10px;
-            }}
-        """)
+        self._apply_card_style(False)
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(12, 10, 12, 10)
@@ -638,12 +647,106 @@ class QuestCard(QFrame):
         )
         info.addWidget(self.tag_lbl)
 
+        self.progress_bar = None
+        if show_queue_controls:
+            self.progress_bar = QProgressBar()
+            self.progress_bar.setRange(0, 100)
+            self.progress_bar.setValue(0)
+            self.progress_bar.setTextVisible(False)
+            self.progress_bar.setFixedHeight(5)
+            self.progress_bar.setStyleSheet(f"""
+                QProgressBar {{
+                    background: {BG_MID.name()};
+                    border: none;
+                    border-radius: 2px;
+                }}
+                QProgressBar::chunk {{
+                    background: {ACCENT_BLUE.name()};
+                    border-radius: 2px;
+                }}
+            """)
+            self.progress_bar.hide()
+            info.addWidget(self.progress_bar)
+
         layout.addLayout(info)
         layout.addStretch()
 
         right_col = QVBoxLayout()
         right_col.setContentsMargins(0, 0, 0, 0)
-        right_col.setSpacing(0)
+        right_col.setSpacing(4)
+
+        self.btn_start_now = None
+        self.btn_launch_parallel = None
+        self.btn_stop_stub = None
+        if show_queue_controls:
+            qid = str(quest.get("id") or "")
+            btn_row = QHBoxLayout()
+            btn_row.setContentsMargins(0, 0, 0, 0)
+            btn_row.setSpacing(6)
+            btn_row.addStretch()
+
+            self.btn_start_now = QPushButton()
+            self.btn_start_now.setIcon(_load_svg_icon(START_ICON_SVG_PATH, 14))
+            self.btn_start_now.setIconSize(QSize(14, 14))
+            self.btn_start_now.setFixedSize(28, 26)
+            self.btn_start_now.setToolTip("Start this quest now (replaces current active quest)")
+            self.btn_start_now.setCursor(Qt.CursorShape.PointingHandCursor)
+            self.btn_start_now.setStyleSheet("""
+                QPushButton {
+                    background: #23a55a;
+                    border: none;
+                    border-radius: 6px;
+                }
+                QPushButton:hover {
+                    background: #1b8045;
+                }
+            """)
+            self.btn_start_now.clicked.connect(lambda: self.start_now_clicked.emit(qid))
+
+            self.btn_launch_parallel = QPushButton("+")
+            self.btn_launch_parallel.setFixedSize(28, 26)
+            self.btn_launch_parallel.setToolTip("Launch stub alongside other running quests")
+            self.btn_launch_parallel.setCursor(Qt.CursorShape.PointingHandCursor)
+            self.btn_launch_parallel.setStyleSheet(f"""
+                QPushButton {{
+                    background: {BG_MID.name()};
+                    color: {TEXT_PRIMARY.name()};
+                    border: 1px solid {BORDER.name()};
+                    border-radius: 6px;
+                    font-size: 14px;
+                    font-weight: 700;
+                }}
+                QPushButton:hover {{
+                    border: 1px solid {ACCENT_BLUE.name()};
+                    color: {ACCENT_BLUE.name()};
+                }}
+            """)
+            self.btn_launch_parallel.clicked.connect(lambda: self.launch_parallel_clicked.emit(qid))
+
+            self.btn_stop_stub = QPushButton()
+            self.btn_stop_stub.setIcon(_load_svg_icon(STOP_ICON_SVG_PATH, 14))
+            self.btn_stop_stub.setIconSize(QSize(14, 14))
+            self.btn_stop_stub.setFixedSize(28, 26)
+            self.btn_stop_stub.setToolTip("Stop this quest's stub")
+            self.btn_stop_stub.setCursor(Qt.CursorShape.PointingHandCursor)
+            self.btn_stop_stub.setStyleSheet("""
+                QPushButton {
+                    background: #da373c;
+                    border: none;
+                    border-radius: 6px;
+                }
+                QPushButton:hover {
+                    background: #a12828;
+                }
+            """)
+            self.btn_stop_stub.clicked.connect(lambda: self.stop_stub_clicked.emit(qid))
+            self.btn_stop_stub.hide()
+
+            btn_row.addWidget(self.btn_start_now)
+            btn_row.addWidget(self.btn_launch_parallel)
+            btn_row.addWidget(self.btn_stop_stub)
+            right_col.addLayout(btn_row)
+
         right_col.addStretch()
 
         self.expiry_lbl = QLabel()
@@ -658,6 +761,54 @@ class QuestCard(QFrame):
 
         self.update_expiry()
         self._load_icon()
+
+    def _apply_card_style(self, is_running: bool):
+        border_col = ACCENT_GREEN.name() if is_running else BORDER.name()
+        self.setStyleSheet(f"""
+            QuestCard {{
+                background: {BG_CARD.name()};
+                border: 1px solid {border_col};
+                border-radius: 10px;
+            }}
+        """)
+
+    def set_running_state(self, is_running: bool, pct: float, prog_label: str):
+        if is_running != self._is_running:
+            self._is_running = is_running
+            self._apply_card_style(is_running)
+
+        if is_running:
+            self.update_tag(prog_label if prog_label else "Running", ACCENT_GREEN.name())
+        else:
+            tag = f"Queued • {prog_label}" if pct > 0 and prog_label else "Queued"
+            self.update_tag(tag, TEXT_MUTED.name())
+
+        if self.progress_bar is not None:
+            if is_running or pct > 0:
+                self.progress_bar.setValue(max(0, min(100, int(round(pct * 100)))))
+                chunk_col = ACCENT_GREEN.name() if is_running else ACCENT_BLUE.name()
+                self.progress_bar.setStyleSheet(f"""
+                    QProgressBar {{
+                        background: {BG_MID.name()};
+                        border: none;
+                        border-radius: 2px;
+                    }}
+                    QProgressBar::chunk {{
+                        background: {chunk_col};
+                        border-radius: 2px;
+                    }}
+                """)
+                self.progress_bar.show()
+            else:
+                self.progress_bar.hide()
+
+        if self._show_queue_controls:
+            if self.btn_stop_stub is not None:
+                self.btn_stop_stub.setVisible(is_running)
+            if self.btn_start_now is not None:
+                self.btn_start_now.setVisible(not is_running)
+            if self.btn_launch_parallel is not None:
+                self.btn_launch_parallel.setVisible(not is_running)
 
     def update_tag(self, text: str, color: str = None):
         self.tag_lbl.setText(text)
@@ -933,7 +1084,8 @@ class ActiveQuestPanel(QWidget):
     def _on_click_start(self):
         server_state.set_auto_complete_enabled(True)
         try:
-            req = urllib.request.Request(get_server_url("/start"), data=b"{}", headers={"Content-Type": "application/json"})
+            body = json.dumps({"userId": server_state.get_selected_user_id()}).encode("utf-8")
+            req = urllib.request.Request(get_server_url("/start"), data=body, headers={"Content-Type": "application/json"})
             urllib.request.urlopen(req, timeout=3)
         except Exception:
             pass
@@ -943,7 +1095,7 @@ class ActiveQuestPanel(QWidget):
             return
         server_state.add_skipped_quest(self._current_quest_id)
         try:
-            body = json.dumps({"questId": self._current_quest_id}).encode("utf-8")
+            body = json.dumps({"questId": self._current_quest_id, "userId": server_state.get_selected_user_id()}).encode("utf-8")
             req = urllib.request.Request(get_server_url("/skip"), data=body, headers={"Content-Type": "application/json"})
             urllib.request.urlopen(req, timeout=3)
         except Exception:
@@ -957,7 +1109,31 @@ class ActiveQuestPanel(QWidget):
             self.hero.hide()
             self.hero.setFixedHeight(0)
 
+    def update_multi_quests(self, quests: list[dict], has_heartbeat: bool = False):
+        if not has_heartbeat or not quests:
+            self.update_quest(None, has_heartbeat=has_heartbeat)
+            return
+
+        self._set_hero_visible(False)
+        self._current_quest_id = None
+        self.btn_start.hide()
+        self.btn_skip.hide()
+        self.btn_stop.show()
+        self.btn_stop.setToolTip("Stop all running stubs")
+
+        self.title_lbl.setText(f"Running {len(quests)} quests")
+        total_orbs = sum(quest_orbs(q) for q in quests)
+        orb_icon = f"<img src='data:image/png;base64,{ORB_ICON_BASE64}' width='13' height='13'>" if ORB_ICON_BASE64 else "◇"
+        self.orb_lbl.setText(f"{orb_icon} {total_orbs:,} Orbs total" if total_orbs else "")
+
+        pcts = [quest_progress(q, "running", 0)[0] for q in quests]
+        avg_pct = sum(pcts) / len(pcts) if pcts else 0.0
+        self.ring.set_progress(avg_pct)
+        self.ring.set_pixmap(self._default_icon)
+        self.prog_lbl.setText("Parallel stubs active — individual progress shown below")
+
     def update_quest(self, quest: dict | None, active_status_type: str | None = None, active_ends_at: int = 0, has_heartbeat: bool = False):
+        self.btn_stop.setToolTip("Stop auto-completing quests & kill stub")
         if not has_heartbeat:
             self._set_hero_visible(False)
             self.title_lbl.setText("Waiting for connection...")
@@ -3072,8 +3248,27 @@ class MainWindow(QMainWindow):
             self.status_lbl.setText(hb_text)
 
             has_hb = bool(last_heartbeat)
-            if active_id:
-                live = next((q for q in quests if q and isinstance(q, dict) and q.get("id") == active_id), None)
+            running_quests = state.get("running_quests") or {}
+            quests_by_id = {str(q.get("id")): q for q in quests if q and isinstance(q, dict) and q.get("id")}
+
+            if len(running_quests) > 1:
+                live_running = [
+                    quests_by_id.get(qid) or info.get("quest")
+                    for qid, info in running_quests.items()
+                    if quests_by_id.get(qid) or info.get("quest")
+                ]
+                self.active_panel.update_multi_quests(live_running, has_heartbeat=has_hb)
+            elif len(running_quests) == 1:
+                r_qid, r_info = next(iter(running_quests.items()))
+                live = quests_by_id.get(r_qid) or r_info.get("quest")
+                self.active_panel.update_quest(
+                    live,
+                    r_info.get("status_type") or active_status_type or "running",
+                    r_info.get("ends_at", 0) or active_ends_at,
+                    has_heartbeat=has_hb,
+                )
+            elif active_id:
+                live = quests_by_id.get(str(active_id))
                 self.active_panel.update_quest(live or active_quest, active_status_type, active_ends_at, has_heartbeat=has_hb)
             else:
                 self.active_panel.update_quest(None, has_heartbeat=has_hb)
@@ -3118,18 +3313,20 @@ class MainWindow(QMainWindow):
                 self._last_skipped_ids = skipped_ids
                 self._rebuild_tabs(quests, active_id, active_status_type, active_ends_at)
 
-            quests_by_id = {str(q.get("id")): q for q in quests if q and isinstance(q, dict) and q.get("id")}
             for card in self._queue_page.cards():
                 if not card or not card.quest:
                     continue
                 qid = str(card.quest.get("id"))
                 if qid in quests_by_id:
                     card.quest = quests_by_id[qid]
-                if qid == active_id and active_status_type in ["waiting", "stopping", "cleanup", "running"]:
-                    _, prog_label = quest_progress(card.quest, active_status_type, active_ends_at)
-                    card.update_tag(prog_label if prog_label else "Running")
-                else:
-                    card.update_tag("Queued")
+                is_running = qid in running_quests or (
+                    qid == str(active_id) and active_status_type in ["waiting", "stopping", "cleanup", "running"]
+                )
+                r_info = running_quests.get(qid) or {}
+                eff_status = (r_info.get("status_type") or "running") if is_running else None
+                eff_ends = r_info.get("ends_at", 0) if qid in running_quests else (active_ends_at if qid == str(active_id) else 0)
+                pct, prog_label = quest_progress(card.quest, eff_status, eff_ends)
+                card.set_running_state(is_running, pct, prog_label)
                 card.update_expiry()
 
             for card in self._available_page.cards():
@@ -3148,6 +3345,33 @@ class MainWindow(QMainWindow):
         server_state.set_selected_user(user_id)
         self._last_quest_ids = []
         self._last_user_ids = []
+
+    def _post_server(self, path: str, payload: dict):
+        def _worker():
+            try:
+                body = json.dumps(payload).encode("utf-8")
+                req = urllib.request.Request(
+                    get_server_url(path),
+                    data=body,
+                    headers={"Content-Type": "application/json"},
+                )
+                urllib.request.urlopen(req, timeout=5)
+            except Exception as e:
+                server_state.log_event(f"Error calling {path}: {e}")
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _on_queue_start_now(self, quest_id: str):
+        selected_id = server_state.get_selected_user_id()
+        self._post_server("/start_quest", {"questId": quest_id, "userId": selected_id, "parallel": False})
+
+    def _on_queue_launch_parallel(self, quest_id: str):
+        selected_id = server_state.get_selected_user_id()
+        self._post_server("/start_quest", {"questId": quest_id, "userId": selected_id, "parallel": True})
+
+    def _on_queue_stop_stub(self, quest_id: str):
+        selected_id = server_state.get_selected_user_id()
+        self._post_server("/stop_quest", {"questId": quest_id, "userId": selected_id})
 
     def _filter_available(self, quests: list[dict]) -> list[dict]:
         skipped_ids = set(server_state.get_skipped_quests())
@@ -3194,15 +3418,22 @@ class MainWindow(QMainWindow):
         self.tabs.setTabText(0, f"Queue ({len(queue_quests)})" if queue_quests else "Queue")
 
         if queue_quests:
+            running_quests = server_state.get_running_quests(server_state.get_selected_user_id())
             for q in queue_quests:
-                is_target_active = q.get("id") == active_id
-                pct, prog_label = quest_progress(
-                    q,
-                    active_status_type if is_target_active else None,
-                    active_ends_at if is_target_active else 0
+                qid = str(q.get("id") or "")
+                is_running = qid in running_quests or (
+                    qid == str(active_id) and active_status_type in ["waiting", "stopping", "cleanup", "running"]
                 )
-                tag = prog_label if prog_label else "Queued"
-                self._queue_page.add_card(QuestCard(q, tag=tag, tag_color=TEXT_MUTED.name(), show_expiry=True))
+                r_info = running_quests.get(qid) or {}
+                eff_status = (r_info.get("status_type") or "running") if is_running else None
+                eff_ends = r_info.get("ends_at", 0) if qid in running_quests else (active_ends_at if qid == str(active_id) else 0)
+                pct, prog_label = quest_progress(q, eff_status, eff_ends)
+                card = QuestCard(q, tag="Queued", tag_color=TEXT_MUTED.name(), show_expiry=True, show_queue_controls=True)
+                card.set_running_state(is_running, pct, prog_label)
+                card.start_now_clicked.connect(self._on_queue_start_now)
+                card.launch_parallel_clicked.connect(self._on_queue_launch_parallel)
+                card.stop_stub_clicked.connect(self._on_queue_stop_stub)
+                self._queue_page.add_card(card)
         else:
             self._queue_page.add_empty("No queued quests")
 

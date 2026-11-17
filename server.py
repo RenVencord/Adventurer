@@ -295,28 +295,68 @@ def launch_exe(path: Path) -> subprocess.Popen:
         raise
 
 
+def _kill_process_tree(app_id: str, proc: subprocess.Popen):
+    try:
+        parent = psutil.Process(proc.pid)
+        for child in parent.children(recursive=True):
+            try:
+                child.kill()
+                log.info(f"Killed child {child.pid} ({child.name()})")
+            except psutil.NoSuchProcess:
+                pass
+    except psutil.NoSuchProcess:
+        pass
+
+    if proc.poll() is None:
+        proc.kill()
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            log.warning(f"Process {proc.pid} did not exit after kill - giving up")
+        log.info(f"Killed process for app {app_id} (pid {proc.pid})")
+
+
+def _kill_app(app_id: str):
+    proc = _running.pop(str(app_id), None)
+    if proc is not None:
+        _kill_process_tree(str(app_id), proc)
+
+
 def _kill_all_running():
     for app_id, proc in list(_running.items()):
-        try:
-            parent = psutil.Process(proc.pid)
-            for child in parent.children(recursive=True):
-                try:
-                    child.kill()
-                    log.info(f"Killed child {child.pid} ({child.name()})")
-                except psutil.NoSuchProcess:
-                    pass
-        except psutil.NoSuchProcess:
-            pass
-
-        if proc.poll() is None:
-            proc.kill()
-            try:
-                proc.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                log.warning(f"Process {proc.pid} did not exit after kill - giving up")
-            log.info(f"Killed process for app {app_id} (pid {proc.pid})")
-
+        _kill_process_tree(app_id, proc)
     _running.clear()
+
+
+def _prune_dead_running():
+    dead_apps = {app_id for app_id, proc in list(_running.items()) if proc.poll() is not None}
+    for app_id in dead_apps:
+        _running.pop(app_id, None)
+    if dead_apps:
+        for info in server_state.get_all_running_entries():
+            if info.get("app_id") in dead_apps:
+                server_state.remove_running_quest(info["quest_id"], user_id=info.get("user_id"))
+
+
+def _resolve_app_data(app_id: str, quest_obj: dict | None) -> dict | None:
+    app_data = find_app(str(app_id))
+    if app_data or not quest_obj:
+        return app_data
+    cfg = quest_obj.get("config") or {}
+    app_name = (cfg.get("application") or {}).get("name")
+    if not app_name:
+        tasks = (cfg.get("taskConfigV2") or {}).get("tasks") or {}
+        for task_key in ["PLAY_ON_DESKTOP", "STREAM_ON_DESKTOP", "WATCH_VIDEO"]:
+            task_apps = (tasks.get(task_key) or {}).get("applications") or []
+            if task_apps and isinstance(task_apps, list) and len(task_apps) > 0:
+                app_name = task_apps[0].get("name")
+                if app_name:
+                    break
+    if not app_name:
+        app_name = (cfg.get("messages") or {}).get("gameTitle")
+    if app_name:
+        return {"id": str(app_id), "name": app_name, "executables": []}
+    return None
 
 
 def _run_server_thread(port: int = 5000):
@@ -468,10 +508,14 @@ def run():
     if str(app_id) in _running and _running[str(app_id)].poll() is None:
         log.info(f"App {app_id} is already running")
         quest_id = quest_obj.get("id") if quest_obj else None
+        if quest_id:
+            server_state.add_running_quest(quest_id, quest_obj, str(app_id), "running", 0, user_id=user_id)
         server_state.set_active_quest(quest_id, quest_obj, "running", 0)
         return jsonify({"status": "launched", "name": app_data["name"]})
 
-    _kill_all_running()
+    if not server_state.is_multi_stub_mode():
+        _kill_all_running()
+        server_state.clear_running_quests()
 
     try:
         proc = launch_exe(exe_path.absolute())
@@ -484,8 +528,11 @@ def run():
     _running[str(app_id)] = proc
 
     quest_id = quest_obj.get("id") if quest_obj else None
+    if quest_id:
+        server_state.add_running_quest(quest_id, quest_obj, str(app_id), "running", 0, user_id=user_id)
     server_state.set_active_quest(quest_id, quest_obj, "running", 0)
-    server_state.set_auto_complete_enabled(True)
+    if not server_state.is_multi_stub_mode():
+        server_state.set_auto_complete_enabled(True)
 
     msg = f"Launched {app_data['name']} (quest {quest_id})"
     log.info(msg)
@@ -613,9 +660,23 @@ def stop():
     user_id = body.get("userId") if body else None
     pause_auto_complete = body.get("pauseAutoComplete", False)
 
+    other_running = [
+        e for e in server_state.get_all_running_entries()
+        if user_id and e.get("user_id") not in (str(user_id), None)
+    ]
+    if user_id and other_running:
+        for qid in list(server_state.get_running_quests(user_id).keys()):
+            _stop_single_running_quest(qid, user_id)
+        msg = f"Stopped games for user {user_id}"
+        log.info(msg)
+        server_state.log_event(msg, user_id)
+        return jsonify({"status": "stopped"})
+
     if pause_auto_complete:
         server_state.set_auto_complete_enabled(False)
+    server_state.set_multi_stub_mode(False)
     _kill_all_running()
+    server_state.clear_running_quests()
     server_state.set_active_quest(None, None, None, 0)
     cleanup_stubs()
 
@@ -629,8 +690,9 @@ def stop():
 @app.route("/start", methods=["POST"])
 def start():
     body = request.get_json(silent=True) or {}
-    user_id = body.get("userId") if body else None
+    user_id = (body.get("userId") if body else None) or server_state.get_selected_user_id()
 
+    server_state.set_multi_stub_mode(False)
     server_state.set_auto_complete_enabled(True)
     msg = "Auto complete started"
     log.info(msg)
@@ -644,23 +706,7 @@ def start():
         app_id = get_quest_app_id(first_quest)
         if not app_id:
             continue
-        app_data = find_app(str(app_id))
-        if not app_data:
-            cfg = first_quest.get("config") or {}
-            app_name = (cfg.get("application") or {}).get("name")
-            if not app_name:
-                tasks = (cfg.get("taskConfigV2") or {}).get("tasks") or {}
-                for task_key in ["PLAY_ON_DESKTOP", "STREAM_ON_DESKTOP"]:
-                    task_apps = (tasks.get(task_key) or {}).get("applications") or []
-                    if task_apps and isinstance(task_apps, list) and len(task_apps) > 0:
-                        app_name = task_apps[0].get("name")
-                        if app_name:
-                            break
-            if not app_name:
-                app_name = (cfg.get("messages") or {}).get("gameTitle")
-            if app_name:
-                app_data = {"id": str(app_id), "name": app_name, "executables": []}
-
+        app_data = _resolve_app_data(app_id, first_quest)
         if not app_data:
             continue
 
@@ -670,11 +716,15 @@ def start():
                 server_state.log_event(f"No launchable executable for {server_state._get_quest_name(first_quest)} - trying next quest", user_id)
                 continue
             _kill_all_running()
+            server_state.clear_running_quests()
             proc = launch_exe(exe_path.absolute())
             _running[str(app_id)] = proc
-            server_state.set_active_quest(first_quest.get("id"), first_quest, "running", 0)
+            qid = first_quest.get("id")
+            server_state.add_running_quest(qid, first_quest, str(app_id), "running", 0, user_id=user_id)
+            server_state.set_active_quest(qid, first_quest, "running", 0)
             server_state.log_event(f"Started quest: {server_state._get_quest_name(first_quest)}", user_id)
             launched = True
+            break
         except Exception as e:
             log.error(f"Failed to launch quest {server_state._get_quest_name(first_quest)}: {e}")
             continue
@@ -683,6 +733,108 @@ def start():
         server_state.log_event("No launchable game quest found", user_id)
 
     return jsonify({"status": "started"})
+
+
+def _stop_single_running_quest(quest_id: str, user_id: str | None = None):
+    running_map = server_state.get_running_quests(user_id)
+    info = running_map.get(str(quest_id))
+    server_state.remove_running_quest(str(quest_id), user_id=user_id)
+
+    if info and info.get("app_id"):
+        app_id = str(info["app_id"])
+        still_used = any(
+            q_info.get("app_id") == app_id
+            for q_info in server_state.get_all_running_entries()
+        )
+        if not still_used:
+            _kill_app(app_id)
+            cleanup_stubs()
+
+    remaining_all = server_state.get_all_running_entries()
+    active_id, _ = server_state.get_active_quest()
+    if not remaining_all:
+        server_state.set_multi_stub_mode(False)
+        server_state.set_active_quest(None, None, None, 0)
+    elif active_id == quest_id:
+        next_info = remaining_all[0]
+        server_state.set_active_quest(next_info["quest_id"], next_info.get("quest"), "running", 0)
+
+
+@app.route("/start_quest", methods=["POST"])
+def start_quest():
+    body = request.get_json(silent=True) or {}
+    quest_id = body.get("questId")
+    user_id = body.get("userId") or server_state.get_selected_user_id()
+    parallel = bool(body.get("parallel", False))
+
+    if not quest_id:
+        return jsonify({"error": "missing questId"}), 400
+
+    state = server_state.get_state(user_id)
+    quests = state.get("quests") or []
+    quest_obj = next((q for q in quests if q and isinstance(q, dict) and str(q.get("id")) == str(quest_id)), None)
+    if not quest_obj:
+        return jsonify({"error": "quest not found"}), 404
+
+    app_id = get_quest_app_id(quest_obj)
+    if not app_id:
+        return jsonify({"error": "quest has no app id"}), 400
+
+    app_data = _resolve_app_data(app_id, quest_obj)
+    if not app_data:
+        return jsonify({"error": "app not found"}), 404
+
+    try:
+        exe_path = ensure_executable(app_data, user_id)
+    except FileNotFoundError as e:
+        return jsonify({"error": str(e)}), 400
+
+    if not exe_path:
+        return jsonify({"error": "no suitable executable"}), 400
+
+    _prune_dead_running()
+
+    if parallel:
+        server_state.set_multi_stub_mode(True)
+        server_state.set_auto_complete_enabled(False)
+    else:
+        server_state.set_multi_stub_mode(False)
+        _kill_all_running()
+        server_state.clear_running_quests()
+        server_state.set_priority_quest(str(quest_id), user_id=user_id)
+        server_state.set_auto_complete_enabled(True)
+
+    if str(app_id) not in _running or _running[str(app_id)].poll() is not None:
+        try:
+            proc = launch_exe(exe_path.absolute())
+            _running[str(app_id)] = proc
+        except Exception as e:
+            msg = f"Failed to launch executable: {e}"
+            log.error(msg)
+            server_state.log_event(f"Error: {msg}", user_id)
+            return jsonify({"error": msg}), 500
+
+    server_state.add_running_quest(str(quest_id), quest_obj, str(app_id), "running", 0, user_id=user_id)
+    server_state.set_active_quest(str(quest_id), quest_obj, "running", 0)
+
+    qname = server_state._get_quest_name(quest_obj)
+    mode_label = "in parallel" if parallel else "now"
+    server_state.log_event(f"Started quest {mode_label}: {qname}", user_id)
+
+    return jsonify({"status": "launched", "questId": str(quest_id), "appId": str(app_id), "parallel": parallel})
+
+
+@app.route("/stop_quest", methods=["POST"])
+def stop_quest():
+    body = request.get_json(silent=True) or {}
+    quest_id = body.get("questId")
+    user_id = body.get("userId") or server_state.get_selected_user_id()
+    if not quest_id:
+        return jsonify({"error": "missing questId"}), 400
+
+    _stop_single_running_quest(str(quest_id), user_id)
+    server_state.log_event(f"Stopped stub for quest {quest_id}", user_id)
+    return jsonify({"status": "stopped", "questId": str(quest_id)})
 
 
 @app.route("/skip", methods=["POST"])
@@ -694,10 +846,8 @@ def skip():
     if quest_id:
         server_state.add_skipped_quest(quest_id)
         active_id, _ = server_state.get_active_quest()
-        if active_id == quest_id:
-            _kill_all_running()
-            server_state.set_active_quest(None, None, None, 0)
-            cleanup_stubs()
+        if active_id == quest_id or str(quest_id) in server_state.get_running_quests():
+            _stop_single_running_quest(str(quest_id), user_id)
         msg = f"Quest skipped: {quest_id}"
         log.info(msg)
         server_state.log_event(msg, user_id)
@@ -726,6 +876,8 @@ def reset():
     user_id = body.get("userId") if body else None
 
     _kill_all_running()
+    server_state.clear_running_quests()
+    server_state.set_multi_stub_mode(False)
     server_state.set_active_quest(None, None, None, 0)
     server_state.set_skipped_quests([])
     cleanup_stubs()
@@ -768,16 +920,35 @@ def heartbeat():
 
     plugin_version = body.get("pluginVersion") or body.get("plugin_version")
     server_state.set_quests(user_id, username, avatar, quests, plugin_version=plugin_version)
+
+    _prune_dead_running()
+    running_map = server_state.get_running_quests(user_id)
+    if running_map:
+        quests_by_id = {str(q.get("id")): q for q in quests if q and isinstance(q, dict) and q.get("id")}
+        for r_qid in list(running_map.keys()):
+            q_obj = quests_by_id.get(r_qid)
+            if q_obj and (q_obj.get("userStatus") or {}).get("completedAt"):
+                _stop_single_running_quest(r_qid, user_id)
+                server_state.log_event(f"Completed & stopped stub: {server_state._get_quest_name(q_obj)}", user_id)
+
     log.info(f"Heartbeat from \033[96m{username} ({user_id})\033[0m: {len(quests)} quests")
 
     if server_state.should_log("heartbeats"):
         server_state.log_event(f"Heartbeat synchronized ({len(quests)} quests active/queued)", user_id)
 
+    selected_uid = server_state.get_selected_user_id()
+    is_active_user = (not selected_uid) or (str(user_id) == str(selected_uid))
+    effective_auto = server_state.is_auto_complete_enabled() if is_active_user else False
+    priority_qid, priority_seq = server_state.get_priority_quest(user_id)
     return jsonify({
         "status": "ok",
         "count": len(quests),
-        "auto_complete_enabled": server_state.is_auto_complete_enabled(),
-        "skipped_quest_ids": server_state.get_skipped_quests()
+        "auto_complete_enabled": effective_auto,
+        "skipped_quest_ids": server_state.get_skipped_quests(),
+        "multi_stub_mode": server_state.is_multi_stub_mode(),
+        "running_quest_ids": list(server_state.get_running_quests(user_id).keys()),
+        "priority_quest_id": priority_qid,
+        "priority_seq": priority_seq,
     })
 
 
