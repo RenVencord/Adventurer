@@ -1757,3 +1757,114 @@ test("paced execution with delay_ms respects timeouts between entries", () => {
     env.clock.tick(50);
     assert.deepEqual(timeline, ["one", "two"]);
 });
+
+test("on-demand execution paces buleroQuest17 sequentially from sentStep+1 through shift_completed when app.fire entries do not reach quest-completed", () => {
+    const g = makeGame();
+    let hookArg = null;
+    const reached = [];
+    const questEntity = new Entity("QuestManager", "g-qm");
+    questEntity.script = {
+        buleroQuest17: {
+            t: 10,
+            lastSend: 9,
+            minGap: 6,
+            sentStep: 1,
+            target: 1,
+            reach(step) {
+                this.target = step;
+                reached.push(step);
+            },
+            onHook(ev, data) {
+                hookArg = ev;
+                void Number(data.officer);
+                this.reach(5);
+            },
+            flush() {
+                if (this.target <= this.sentStep || this.t - this.lastSend < this.minGap) return;
+                this.lastSend = this.t;
+                this.sentStep = this.target;
+                if (this.target >= 5) g.arise.postMessage("quest-completed");
+                else g.arise.postMessage("quest-progress", this.target);
+            }
+        }
+    };
+    g.app.root.children.push(questEntity);
+
+    const env = load(g, { recipes: [], quests: OPEN });
+    env.post({
+        __adventurerOverlay: true,
+        type: "ADVENTURER_EXECUTE_RECIPE",
+        recipe: {
+            format: "advrecipe",
+            version: 1,
+            application_id: APP_ID,
+            scene: "*",
+            name: "Blade Runner 2099",
+            verifiedCompletion: true,
+            completion: {
+                version: 1,
+                goal: "quest-completed",
+                triggers: ["select:play"],
+                entries: [{ name: "drone:tension", scope: "app", args: [0.5] }]
+            }
+        }
+    });
+    env.clock.tick(0);
+    // t=10, lastSend=9 => initialDelay 5500ms before step 2
+    assert.deepEqual(reached, []);
+    env.clock.tick(5500);
+    assert.deepEqual(reached, [2]);
+    env.clock.tick(5500);
+    assert.deepEqual(reached, [2, 3]);
+    env.clock.tick(5500);
+    assert.deepEqual(reached, [2, 3, 4]);
+    env.clock.tick(5500);
+    assert.deepEqual(reached, [2, 3, 4, 5]);
+    assert.equal(hookArg, "shift_completed");
+    assert.equal(env.status().done, true);
+    assert.equal(g.bridge.includes("quest-completed"), true);
+});
+
+test("recipe-less auto-complete detects buleroQuest17 and generic reach/flush quest scripts and paces them to completion", () => {
+    const g = makeGame();
+    const reached = [];
+    const questEntity = new Entity("CustomQM", "g-cqm");
+    questEntity.script = {
+        customQuest99: {
+            t: 12,
+            lastSend: 1,
+            minGap: 6,
+            sentStep: 1,
+            target: 1,
+            reach(step) {
+                this.target = step;
+                reached.push(step);
+            },
+            flush() {
+                if (this.target <= this.sentStep || this.t - this.lastSend < this.minGap) return;
+                this.lastSend = this.t;
+                this.sentStep = this.target;
+                if (this.target >= 5) g.arise.postMessage("quest-completed");
+                else g.arise.postMessage("quest-progress", this.target);
+            }
+        }
+    };
+    g.app.root.children.push(questEntity);
+
+    // Zero bundled recipes, zero local recipes, no event graph
+    const env = load(g, { recipes: [], local: [], quests: OPEN });
+    assert.equal(env.status().recipe.name, "Dynamic Quest Manager");
+    assert.equal(env.status().recipe.origin, "guessed");
+
+    // Scheduled automatically on reconcile because sentStep >= 1
+    env.clock.tick(0);
+    assert.deepEqual(reached, [2]);
+    env.clock.tick(5500);
+    assert.deepEqual(reached, [2, 3]);
+    env.clock.tick(5500);
+    assert.deepEqual(reached, [2, 3, 4]);
+    env.clock.tick(5500);
+    assert.deepEqual(reached, [2, 3, 4, 5]);
+    assert.equal(env.status().done, true);
+    assert.equal(g.bridge.includes("quest-completed"), true);
+});

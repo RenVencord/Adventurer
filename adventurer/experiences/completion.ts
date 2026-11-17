@@ -148,6 +148,8 @@ export interface CompletionOptions {
     recipes: unknown[];
     /** Quest status per application id (see the quest gate above). */
     quests: Record<string, CompletionQuestStatus>;
+    /** Whether automatic completion hooks are active on startup (defaults to true). */
+    enabled?: boolean;
 }
 
 export interface CompletionStatus {
@@ -201,12 +203,56 @@ export interface AdventurerCompletionApi {
 /** Message tag shared with the existing Adventurer game overlay. */
 export const COMPLETION_MESSAGE_TAG = "__adventurerOverlay";
 
+/** Injected and on-demand execution message types */
+export const COMPLETION_INJECT_TYPE = "completion_inject";
+export const ADVENTURER_INJECT_RECIPE_TYPE = "ADVENTURER_INJECT_RECIPE";
+export const ADVENTURER_EXECUTE_RECIPE_TYPE = "ADVENTURER_EXECUTE_RECIPE";
+export const ADVENTURER_RECIPE_EXECUTION_COMPLETED = "ADVENTURER_RECIPE_EXECUTION_COMPLETED";
+
 /** Token that native.ts replaces with the JSON array of the profiles saved for the frame's application. */
 export const PROFILES_PLACEHOLDER = "__ADVENTURER_PROFILES__";
 
 /** postMessage payload that switches an already injected runner on or off. */
 export function buildCompletionMessage(enabled: boolean) {
     return { [COMPLETION_MESSAGE_TAG]: true, type: "completion" as const, enabled: !!enabled };
+}
+
+/** postMessage payload that injects a recipe into the running runner. */
+export function buildInjectRecipeMessage(recipe: unknown, execute: boolean = false) {
+    return { [COMPLETION_MESSAGE_TAG]: true, type: ADVENTURER_INJECT_RECIPE_TYPE, recipe, execute: !!execute };
+}
+
+/** postMessage payload that immediately executes a recipe on the active PlayCanvas application. */
+export function buildExecuteRecipeMessage(recipe: unknown) {
+    return { [COMPLETION_MESSAGE_TAG]: true, type: ADVENTURER_EXECUTE_RECIPE_TYPE, recipe, execute: true };
+}
+
+/** Resolves recipe precedence: local exact > bundled exact > local * > bundled * > guessed. */
+export function resolvePrecedence(
+    localRecipes: any[],
+    bundledRecipes: any[],
+    guessedRecipe: any | null,
+    scene: string
+): { origin: "local" | "bundled" | "guessed"; recipe: any } | null {
+    const localExact = (localRecipes || []).find(r => r && r.scene === scene);
+    if (localExact) return { origin: "local", recipe: localExact };
+
+    const bundledExact = (bundledRecipes || []).find(r => r && r.scene === scene);
+    if (bundledExact) return { origin: "bundled", recipe: bundledExact };
+
+    const localWildcard = (localRecipes || []).find(r => r && r.scene === "*");
+    if (localWildcard) return { origin: "local", recipe: localWildcard };
+
+    const bundledWildcard = (bundledRecipes || []).find(r => r && r.scene === "*");
+    if (bundledWildcard) return { origin: "bundled", recipe: bundledWildcard };
+
+    if (guessedRecipe && (!guessedRecipe.scene || guessedRecipe.scene === scene || guessedRecipe.scene === "*")) {
+        return { origin: "guessed", recipe: guessedRecipe };
+    } else if (guessedRecipe && !scene) {
+        return { origin: "guessed", recipe: guessedRecipe };
+    }
+
+    return null;
 }
 
 // The placeholder is read once, through this expression. The token is only a variable name until native.ts swaps it
@@ -261,6 +307,7 @@ var S = {
     guessedAttempts: 0, attemptOrigin: "", lastPick: "",
     used: Object.create(null),      // trigger names whose attempt already ran (for the current recipe)
     pending: Object.create(null),   // trigger names with a scheduled attempt
+    pendingExecution: null,         // recipe queued for immediate execution when app becomes ready
     attempts: 0,
     attempting: false, goalSeen: false,
     done: false, doneBy: "",
@@ -330,8 +377,10 @@ function normalizeEntry(e) {
 function normalizeProfile(p, origin) {
     if (!isObj(p) || !isObj(p.completion)) return null;
     var c = p.completion;
-    var label = (typeof p.name === "string" && p.name ? p.name : String(p.scene)) + " (" + origin + ")";
-    if (typeof p.scene !== "string" || !p.scene) return { reason: label + ": missing scene" };
+    var sceneVal = typeof p.scene === "string" ? p.scene : "";
+    if (!sceneVal && p.format === "advrecipe") sceneVal = "*";
+    var label = (typeof p.name === "string" && p.name ? p.name : String(sceneVal)) + " (" + origin + ")";
+    if (!sceneVal) return { reason: label + ": missing scene" };
     // Saved profiles are already filtered by application id (file name), so a missing id means "this application".
     var appId = typeof p.application_id === "string" ? p.application_id : "";
     if (!appId && origin !== "local") return { reason: label + ": missing application_id" };
@@ -361,7 +410,7 @@ function normalizeProfile(p, origin) {
     var entryDelay = Number(c.entry_delay_ms);
     var entryDelayMs = isFinite(entryDelay) && entryDelay > 0 ? Math.min(entryDelay, MAX_DELAY_MS) : 0;
     var recipe = {
-        origin: origin, appId: appId, scene: p.scene, name: typeof p.name === "string" ? p.name : "",
+        origin: origin, appId: appId, scene: sceneVal, name: typeof p.name === "string" ? p.name : "",
         goal: c.goal, triggers: triggers, entries: entries, suppress: suppress, delayMs: delayMs,
         repeatFor: repeatFor, entryDelayMs: entryDelayMs,
         notes: typeof c.notes === "string" ? c.notes : "", source: typeof c.source === "string" ? c.source : "",
@@ -369,6 +418,33 @@ function normalizeProfile(p, origin) {
     };
     recipe.sig = JSON.stringify([origin, appId, p.scene, c.goal, triggers, entries, suppress, delayMs, repeatFor, entryDelayMs]);
     return { recipe: recipe };
+}
+
+function normalizeInjectedRecipe(raw) {
+    if (!isObj(raw)) return { reason: "recipe is not an object" };
+    var p = raw;
+    if (!raw.completion && raw.goal && Array.isArray(raw.entries)) {
+        p = {
+            application_id: S.appId || "",
+            scene: (sceneNames(S.app)[0]) || "*",
+            name: raw.name || "Injected Recipe",
+            completion: raw
+        };
+    } else if (raw.format === "advrecipe" && isObj(raw.completion)) {
+        p = {
+            application_id: raw.application_id || S.appId || "",
+            scene: raw.scene || "*",
+            name: raw.name || "Injected Recipe",
+            completion: raw.completion
+        };
+    }
+    if (p && isObj(p.completion)) {
+        var c = p.completion;
+        if (!Array.isArray(c.triggers) || !c.triggers.length) {
+            c.triggers = ["select:play", "execute:direct"];
+        }
+    }
+    return normalizeProfile(p, "local");
 }
 
 function loadProfiles(list, origin) {
@@ -415,7 +491,12 @@ function recipesForApp() {
 // Every recipe the runner may pick for this application, the guessed one included (what is watched and hooked for).
 function candidateRecipes() {
     var list = recipesForApp();
-    return S.guessed && S.appId ? list.concat([S.guessed]) : list;
+    if (S.guessed && S.appId) list = list.concat([S.guessed]);
+    if (!list.length && S.app && S.appId) {
+        var dynQm = detectDynamicQuestManagerRecipe(S.app, sceneNames(S.app));
+        if (dynQm) list = [dynQm];
+    }
+    return list;
 }
 
 function sceneNames(app) {
@@ -531,12 +612,50 @@ function detectDynamicCollectibleRecipe(app, sceneNames) {
     return null;
 }
 
+function detectDynamicQuestManagerRecipe(app, names) {
+    if (!app || !app.root || !S.appId) return null;
+    var qm = findQuestManagers(app);
+    if (!qm.bq && !qm.dqm && !qm.generic) return null;
+    var scene = names && names.length ? names[0] : "*";
+    var triggers = ["select:play", "shot:fire", "drone:tension", "intro:done", "start", "play", "quest:manager"];
+    try {
+        var cb = app._callbacks || app._l;
+        var keys = cb ? (typeof cb.keys === "function" ? Array.from(cb.keys()) : Object.keys(cb)) : [];
+        for (var i = 0; i < keys.length && triggers.length < 16; i++) {
+            var k = keys[i];
+            if (typeof k === "string" && /start|play|intro|begin|shift|tension/i.test(k) && triggers.indexOf(k) < 0) {
+                triggers.push(k);
+            }
+        }
+    } catch (e) {}
+    var norm = normalizeProfile({
+        application_id: S.appId,
+        scene: scene || "*",
+        name: "Dynamic Quest Manager",
+        completion: {
+            version: 1,
+            goal: "quest-completed",
+            triggers: triggers,
+            entries: [{ name: "quest:manager", scope: "app", source: "guessed" }],
+            suppress: ["leaderboard"],
+            delay_ms: 0,
+            notes: "Dynamic quest-manager heuristic from scene scripts",
+            source: "guessed"
+        }
+    }, "guessed");
+    if (norm && norm.recipe) {
+        noteOnce("dynamic_qm", "synthesized dynamic recipe for PlayCanvas quest manager script", "info");
+        return norm.recipe;
+    }
+    return null;
+}
+
 function currentRecipe() {
     var names = sceneNames(S.app);
     var best = matchedRecipe(names);
     if (best) return best;
     if (S.guessed && S.appId && names.indexOf(S.guessed.scene) >= 0) return S.guessed;
-    return detectDynamicCollectibleRecipe(S.app, names);
+    return detectDynamicCollectibleRecipe(S.app, names) || detectDynamicQuestManagerRecipe(S.app, names);
 }
 
 function gate() {
@@ -710,6 +829,9 @@ function openWindow(recipe) {
     S.windowOpen = true;
     S.suppress = recipe.suppress;
     S.goal = recipe.goal;
+    if (recipe && recipe.goal) {
+        S.goals[recipe.goal] = true;
+    }
     patchPostMessage();
 }
 
@@ -768,15 +890,24 @@ function entityIndex(app) {
 }
 
 function findMatchingEntities(app, pattern) {
-    if (!app || !app.root || !pattern) return [];
+    if (!app || !pattern) return [];
+    var root = null;
+    try { root = app.root; } catch (e) { return []; }
+    if (!root) return [];
     var all = [];
-    var stack = [app.root];
-    while (stack.length && all.length < MAX_ENTITIES) {
+    var stack = [root], visited = new Set();
+    while (stack.length && visited.size < MAX_ENTITIES) {
         var e = stack.pop();
-        if (!e) continue;
+        if (!e || visited.has(e)) continue;
+        visited.add(e);
         all.push(e);
-        var kids = e.children || [];
-        for (var i = kids.length - 1; i >= 0; i--) stack.push(kids[i]);
+        try {
+            var kids = e.children || [];
+            for (var i = kids.length - 1; i >= 0; i--) {
+                var kid = kids[i];
+                if (kid && !visited.has(kid)) stack.push(kid);
+            }
+        } catch (err) {}
     }
     var matched = [];
     if (pattern.indexOf("@tag:") === 0) {
@@ -937,68 +1068,396 @@ function runAttempt(trigger) {
             (skipped.length ? "; skipped: " + skipped.join(", ") : "") + (left ? "; waiting for another trigger" : "; no triggers left"), "info");
     }
 
-    function step(taskIndex) {
-        if (S.goalSeen || taskIndex >= tasks.length) {
-            finishAttempt();
-            return;
-        }
-        var task = tasks[taskIndex];
-        var entry = task.entry;
-        var curEntity = task.entity;
-
-        var why = refusal(entry, recipe);
-        if (why) {
-            skip(skipped, entry.name + " (" + why + ")");
-            step(taskIndex + 1);
-            return;
-        }
-
-        if ((entry.needsIndex || curEntity) && !index) index = entityIndex(S.app);
-        var target = S.app;
-        if (entry.scope === "entity") {
-            if (curEntity) {
-                target = curEntity;
-            } else {
-                target = (entry.guid && index.byGuid[entry.guid]) || (entry.entity && index.byName[entry.entity]) || null;
+    function step(startIndex) {
+        var taskIndex = startIndex;
+        var syncSteps = 0;
+        var MAX_SYNC_STEPS = 100;
+        while (taskIndex < tasks.length) {
+            if (S.goalSeen) break;
+            if (syncSteps >= MAX_SYNC_STEPS) {
+                setTimeout(guarded("next entry bounce", function () { step(taskIndex); }), 0);
+                return;
             }
+            syncSteps++;
+
+            var task = tasks[taskIndex];
+            var entry = task.entry;
+            var curEntity = task.entity;
+
+            var why = refusal(entry, recipe);
+            if (why) {
+                skip(skipped, entry.name + " (" + why + ")");
+                taskIndex++;
+                continue;
+            }
+
+            if ((entry.needsIndex || curEntity) && !index) index = entityIndex(S.app);
+            var target = S.app;
+            if (entry.scope === "entity") {
+                if (curEntity) {
+                    target = curEntity;
+                } else {
+                    target = (entry.guid && index.byGuid[entry.guid]) || (entry.entity && index.byName[entry.entity]) || null;
+                }
+            }
+            if (!target || typeof target.fire !== "function") {
+                skip(skipped, entry.name + " (entity " + (entry.entity || entry.guid || (curEntity && curEntity.name)) + " not found)");
+                taskIndex++;
+                continue;
+            }
+
+            var state = { missing: "" };
+            var args = decodeArg(entry.args, index, state, 0, curEntity);
+            if (state.missing) {
+                skip(skipped, entry.name + " (entity " + state.missing + " not found)");
+                taskIndex++;
+                continue;
+            }
+
+            try {
+                target.fire.apply(target, [entry.name].concat(args));
+                ran.push(entry.name);
+            } catch (err) {
+                ran.push(entry.name + " (threw " + msgOf(err) + ")");
+                note("entry " + entry.name + " threw: " + msgOf(err), "warn");
+            }
+
+            if (S.goalSeen) hit = entry.name;
+            if (S.goalSeen || taskIndex + 1 >= tasks.length) {
+                break;
+            }
+
+            var delay = entry.delayMs || recipe.entryDelayMs || 0;
+            if (delay > 0) {
+                setTimeout(guarded("next entry", function () { step(taskIndex + 1); }), delay);
+                return;
+            }
+
+            taskIndex++;
         }
-        if (!target || typeof target.fire !== "function") {
-            skip(skipped, entry.name + " (entity " + (entry.entity || entry.guid || (curEntity && curEntity.name)) + " not found)");
-            step(taskIndex + 1);
+        if (!S.goalSeen) {
+            tryQuestManagerCompletion(S.app, recipe, function (qmHit) {
+                if (qmHit) hit = qmHit;
+                finishAttempt();
+            });
             return;
         }
-
-        var state = { missing: "" };
-        var args = decodeArg(entry.args, index, state, 0, curEntity);
-        if (state.missing) {
-            skip(skipped, entry.name + " (entity " + state.missing + " not found)");
-            step(taskIndex + 1);
-            return;
-        }
-
-        try {
-            target.fire.apply(target, [entry.name].concat(args));
-            ran.push(entry.name);
-        } catch (err) {
-            ran.push(entry.name + " (threw " + msgOf(err) + ")");
-            note("entry " + entry.name + " threw: " + msgOf(err), "warn");
-        }
-
-        if (S.goalSeen) hit = entry.name;
-        if (S.goalSeen || taskIndex + 1 >= tasks.length) {
-            finishAttempt();
-            return;
-        }
-
-        var delay = entry.delayMs || recipe.entryDelayMs || 0;
-        if (delay > 0) {
-            setTimeout(guarded("next entry", function () { step(taskIndex + 1); }), delay);
-        } else {
-            step(taskIndex + 1);
-        }
+        finishAttempt();
     }
 
     step(0);
+}
+
+function isGenericQuestScript(inst) {
+    if (!inst || typeof inst !== "object") return false;
+    try {
+        if (typeof inst.reach === "function" && typeof inst.flush === "function") {
+            var fs = Function.prototype.toString.call(inst.flush);
+            if (fs.indexOf("quest-completed") >= 0 || fs.indexOf("quest-progress") >= 0 || fs.indexOf("arise") >= 0) return true;
+        }
+        if (typeof inst.completeQuest === "function" || typeof inst.complete === "function") {
+            var fn = inst.completeQuest || inst.complete;
+            var cs = Function.prototype.toString.call(fn);
+            if (cs.indexOf("quest-completed") >= 0 || cs.indexOf("arise") >= 0) return true;
+        }
+    } catch (e) {}
+    return false;
+}
+
+function findQuestManagers(app) {
+    var result = { bq: null, dqm: null, generic: null };
+    if (!app || !app.root) return result;
+    try {
+        var stack = [app.root];
+        var visited = 0;
+        while (stack.length && visited < 4096) {
+            var node = stack.pop();
+            visited++;
+            if (!node) continue;
+            if (node.script) {
+                if (!result.bq && node.script.buleroQuest17) result.bq = node.script.buleroQuest17;
+                if (!result.dqm && node.script.discordQuestManager) result.dqm = node.script.discordQuestManager;
+                if (!result.bq && !result.dqm && !result.generic) {
+                    var keys = Object.keys(node.script);
+                    for (var k = 0; k < keys.length; k++) {
+                        if (isGenericQuestScript(node.script[keys[k]])) {
+                            result.generic = node.script[keys[k]];
+                            break;
+                        }
+                    }
+                }
+                if (result.bq && result.dqm) break;
+            }
+            var kids = node.children;
+            if (kids && kids.length) {
+                for (var i = kids.length - 1; i >= 0; i--) stack.push(kids[i]);
+            }
+        }
+    } catch (err) {
+        note("quest manager lookup failed: " + msgOf(err), "warn");
+    }
+    return result;
+}
+
+function runBuleroStep(bq, stepNum) {
+    if (typeof bq.t === "number" && typeof bq.minGap === "number") {
+        bq.lastSend = bq.t - bq.minGap - 0.1;
+    }
+    if (typeof bq.sentStep === "number" && bq.sentStep >= stepNum) {
+        bq.sentStep = stepNum - 1;
+    }
+    if (stepNum >= 5 && typeof bq.onHook === "function") {
+        bq.onHook("shift_completed", {});
+    }
+    if (!S.goalSeen && typeof bq.reach === "function" && (typeof bq.target !== "number" || bq.target < stepNum)) {
+        bq.reach(stepNum, stepNum >= 5 ? "shift_completed" : "step " + stepNum);
+    }
+    if (!S.goalSeen && typeof bq.flush === "function") {
+        if (typeof bq.t === "number" && typeof bq.minGap === "number") {
+            bq.lastSend = bq.t - bq.minGap - 0.1;
+        }
+        bq.flush();
+    }
+}
+
+function tryQuestManagerCompletion(app, recipe, onDone) {
+    var goal = recipe && recipe.goal ? String(recipe.goal) : "";
+    if (goal && goal !== "quest-completed" && goal !== "arise:questComplete") {
+        onDone("");
+        return;
+    }
+    var qm = findQuestManagers(app);
+    var bq = qm.bq || (qm.generic && typeof qm.generic.reach === "function" && typeof qm.generic.flush === "function" ? qm.generic : null);
+    if (bq) {
+        var maxStep = 5;
+        var current = typeof bq.sentStep === "number" && bq.sentStep > 0 && bq.sentStep < maxStep ? bq.sentStep : 1;
+        var nextStep = current < maxStep ? current + 1 : maxStep;
+        var initialDelay = (typeof bq.t === "number" && typeof bq.lastSend === "number" && (bq.t - bq.lastSend) < 5.5) ? 5500 : 0;
+
+        function dispatchStep(stepNum) {
+            if (!S.attempting || S.goalSeen) {
+                onDone(S.goalSeen ? "buleroQuest17.shift_completed" : "");
+                return;
+            }
+            try {
+                openWindow(recipe);
+                runBuleroStep(bq, stepNum);
+            } catch (err) {
+                note("buleroQuest17 completion failed: " + msgOf(err), "warn");
+                onDone("");
+                return;
+            }
+            if (S.goalSeen || stepNum >= maxStep) {
+                onDone(S.goalSeen ? "buleroQuest17.shift_completed" : "");
+                return;
+            }
+            setTimeout(guarded("buleroQuest17 next step", function () {
+                dispatchStep(stepNum + 1);
+            }), 5500);
+        }
+
+        if (initialDelay > 0) {
+            setTimeout(guarded("buleroQuest17 first step", function () {
+                dispatchStep(nextStep);
+            }), initialDelay);
+        } else {
+            dispatchStep(nextStep);
+        }
+        return;
+    }
+
+    var dqm = qm.dqm || (!bq ? qm.generic : null);
+    if (dqm) {
+        var matched = "";
+        try {
+            if (typeof dqm.completeQuest === "function") dqm.completeQuest();
+            else if (typeof dqm.complete === "function") dqm.complete();
+            else if (typeof dqm.sendComplete === "function") dqm.sendComplete();
+            if (S.goalSeen) matched = "discordQuestManager";
+        } catch (err) {
+            note("discordQuestManager completion failed: " + msgOf(err), "warn");
+        }
+        onDone(matched);
+        return;
+    }
+
+    onDone("");
+}
+
+function executeRecipeDirectly(recipe, source) {
+    if (!S.enabled) S.enabled = true;
+    if (S.attempting) {
+        note("attempt already in progress, queuing direct execution", "warn");
+        return;
+    }
+    if (!S.app) {
+        try { S.app = (window.pc && window.pc.app) || window.app || null; } catch (e) { S.app = null; }
+    }
+    if (!S.app || typeof S.app.fire !== "function") {
+        note("PlayCanvas app instance not ready for direct execution, storing pending execution", "warn");
+        S.pendingExecution = { recipe: recipe, source: source };
+        return;
+    }
+
+    S.done = false;
+    S.doneBy = "";
+    S.goalSeen = false;
+    S.attempts++;
+    S.attemptOrigin = recipe.origin;
+    note("initiating on-demand execution for recipe: " + (recipe.name || recipe.scene) + " (" + source + ")", "info");
+
+    S.attempting = true;
+    if (recipe && recipe.goal) {
+        S.goals[recipe.goal] = true;
+    }
+    openWindow(recipe);
+    ensureHook(true);
+
+    var index = null;
+    var tasks = [];
+
+    var getMatching = function (pattern) {
+        return findMatchingEntities(S.app, pattern);
+    };
+
+    if (recipe.repeatFor) {
+        var targets = getMatching(recipe.repeatFor);
+        if (!targets.length) {
+            note("repeat_for pattern " + recipe.repeatFor + " matched no enabled entities in the scene", "warn");
+        }
+        for (var t = 0; t < targets.length; t++) {
+            for (var e = 0; e < recipe.entries.length; e++) {
+                tasks.push({ entry: recipe.entries[e], entity: targets[t] });
+            }
+        }
+    } else {
+        for (var e = 0; e < recipe.entries.length; e++) {
+            var ent = recipe.entries[e];
+            if (ent.repeatFor) {
+                var targets = getMatching(ent.repeatFor);
+                for (var t = 0; t < targets.length; t++) {
+                    tasks.push({ entry: ent, entity: targets[t] });
+                }
+            } else {
+                tasks.push({ entry: ent, entity: null });
+            }
+        }
+    }
+
+    var ran = [], skipped = [], hit = "";
+
+    function finishDirectAttempt() {
+        S.attempting = false;
+        armWindowClose();
+        if (S.goalSeen) {
+            succeed("on-demand direct execution (" + (hit || "goal event") + ")");
+            try {
+                if (window.top && window.top !== window) {
+                    window.top.postMessage({
+                        [TAG]: true,
+                        type: "ADVENTURER_RECIPE_EXECUTION_COMPLETED",
+                        recipe: recipe,
+                        success: true,
+                        how: hit || "goal event"
+                    }, "*");
+                }
+            } catch (err) {}
+            return;
+        }
+        note("direct execution attempt did not reach " + recipe.goal + "; ran: " + (ran.join(", ") || "nothing") +
+            (skipped.length ? "; skipped: " + skipped.join(", ") : ""), "warn");
+        try {
+            if (window.top && window.top !== window) {
+                window.top.postMessage({
+                    [TAG]: true,
+                    type: "ADVENTURER_RECIPE_EXECUTION_COMPLETED",
+                    recipe: recipe,
+                    success: false,
+                    reason: "goal not seen"
+                }, "*");
+            }
+        } catch (err) {}
+    }
+
+    function stepDirect(startIndex) {
+        var taskIndex = startIndex;
+        var syncSteps = 0;
+        var MAX_SYNC_STEPS = 100;
+        while (taskIndex < tasks.length) {
+            if (S.goalSeen) break;
+            if (syncSteps >= MAX_SYNC_STEPS) {
+                setTimeout(guarded("next entry direct bounce", function () { stepDirect(taskIndex); }), 0);
+                return;
+            }
+            syncSteps++;
+
+            var task = tasks[taskIndex];
+            var entry = task.entry;
+            var curEntity = task.entity;
+
+            var why = refusal(entry, recipe);
+            if (why) {
+                skip(skipped, entry.name + " (" + why + ")");
+                taskIndex++;
+                continue;
+            }
+
+            if ((entry.needsIndex || curEntity) && !index) index = entityIndex(S.app);
+            var target = S.app;
+            if (entry.scope === "entity") {
+                if (curEntity) {
+                    target = curEntity;
+                } else {
+                    target = (entry.guid && index.byGuid[entry.guid]) || (entry.entity && index.byName[entry.entity]) || null;
+                }
+            }
+            if (!target || typeof target.fire !== "function") {
+                skip(skipped, entry.name + " (entity " + (entry.entity || entry.guid || (curEntity && curEntity.name)) + " not found)");
+                taskIndex++;
+                continue;
+            }
+
+            var state = { missing: "" };
+            var args = decodeArg(entry.args, index, state, 0, curEntity);
+            if (state.missing) {
+                skip(skipped, entry.name + " (entity " + state.missing + " not found)");
+                taskIndex++;
+                continue;
+            }
+
+            try {
+                target.fire.apply(target, [entry.name].concat(args));
+                ran.push(entry.name);
+            } catch (err) {
+                ran.push(entry.name + " (threw " + msgOf(err) + ")");
+                note("entry " + entry.name + " threw: " + msgOf(err), "warn");
+            }
+
+            if (S.goalSeen) hit = entry.name;
+            if (S.goalSeen || taskIndex + 1 >= tasks.length) {
+                break;
+            }
+
+            var rawDelay = entry.delayMs || recipe.entryDelayMs || 0;
+            var delay = Math.min(Math.max(0, rawDelay), MAX_DELAY_MS);
+            if (delay > 0) {
+                setTimeout(guarded("next entry direct", function () { stepDirect(taskIndex + 1); }), delay);
+                return;
+            }
+
+            taskIndex++;
+        }
+        if (!S.goalSeen) {
+            tryQuestManagerCompletion(S.app, recipe, function (qmHit) {
+                if (qmHit) hit = qmHit;
+                finishDirectAttempt();
+            });
+            return;
+        }
+        finishDirectAttempt();
+    }
+
+    stepDirect(0);
 }
 
 // One attempt per trigger name, after the click's own synchronous chain has finished.
@@ -1031,7 +1490,7 @@ function goalSighting() {
 // Called for every app event. Returns true when the event must be dropped.
 function onEvent(name) {
     if (!S.enabled || typeof name !== "string") return false;
-    if (S.goals[name]) goalSighting();
+    if (S.goals[name] || (S.goal && name === S.goal)) goalSighting();
     if (S.windowOpen && name !== S.goal) {
         var hit = findMatch([name], S.suppress);
         if (hit) {
@@ -1057,9 +1516,9 @@ function unhook() {
     S.attempting = false;
 }
 
-function ensureHook() {
+function ensureHook(force) {
     if (S.hooked || !S.app || !S.enabled) return;
-    if (!gate().open || candidateRecipes().length === 0) return;
+    if (!force && !S.attempting && (!gate().open || candidateRecipes().length === 0)) return;
     var app = S.app;
     var orig = app.fire;
     if (typeof orig !== "function") {
@@ -1099,6 +1558,13 @@ function reconcile() {
     });
     ensureHook();
     watchGraph();
+    if (gate().open && !S.done && !S.attempting && recipesForApp().length === 0 && !S.guessed && S.app && !S.used["quest:manager"]) {
+        var qm = findQuestManagers(S.app);
+        var activeBq = qm.bq || (qm.generic && typeof qm.generic.reach === "function" ? qm.generic : null);
+        if ((activeBq && ((typeof activeBq.sentStep === "number" && activeBq.sentStep >= 1) || (typeof activeBq.t === "number" && activeBq.t > 0))) || qm.dqm) {
+            scheduleAttempt("quest:manager");
+        }
+    }
 }
 
 function update(next) {
@@ -1157,21 +1623,103 @@ function status() {
 // ---- boot ---------------------------------------------------------------------------------------------------------
 var api = { status: status };
 Object.defineProperty(api, "update", { value: guarded("update", update), enumerable: false });
+Object.defineProperty(api, "execute", {
+    value: guarded("api.execute", function (recipe) {
+        var norm = normalizeInjectedRecipe(recipe);
+        if (norm && norm.recipe) {
+            executeRecipeDirectly(norm.recipe, "api.execute");
+            return true;
+        }
+        return false;
+    }),
+    enumerable: false
+});
+Object.defineProperty(api, "inject", {
+    value: guarded("api.inject", function (recipe, execute) {
+        var norm = normalizeInjectedRecipe(recipe);
+        if (norm && norm.recipe) {
+            S.local = [norm.recipe].concat(S.local);
+            reconcile();
+            if (execute) executeRecipeDirectly(norm.recipe, "api.inject");
+            return true;
+        }
+        return false;
+    }),
+    enumerable: false
+});
 window.__adventurerCompletion = api;
 
 window.addEventListener("message", guarded("message handler", function (e) {
     var d = e && e.data;
-    if (!d || !d[TAG] || (e.source !== window.parent && e.source !== window && (!window.top || e.source !== window.top))) return;
-    if (d.type === "completion" && typeof d.enabled === "boolean") {
+    if (!d) return;
+
+    var isAllowedSource = !e.source || e.source === window || e.source === window.parent || (window.top && e.source === window.top);
+    if (!isAllowedSource) return;
+
+    var isTag = !!d[TAG];
+    var type = d.type;
+
+    if (type === "completion") {
+        if (!isTag || typeof d.enabled !== "boolean") return;
         S.enabled = d.enabled;
-    } else if (d.type === "menu_state" && typeof d.autoComplete === "boolean") {
-        S.enabled = d.autoComplete;
-    } else {
+        if (!S.enabled) unhook();
+        note("runner " + (S.enabled ? "enabled" : "disabled"));
+        reconcile();
         return;
     }
-    if (!S.enabled) unhook();
-    note("runner " + (S.enabled ? "enabled" : "disabled"));
-    reconcile();
+
+    if (type === "menu_state") {
+        if (!isTag || typeof d.autoComplete !== "boolean") return;
+        S.enabled = d.autoComplete;
+        if (!S.enabled) unhook();
+        note("runner " + (S.enabled ? "enabled" : "disabled"));
+        reconcile();
+        return;
+    }
+
+    var isInject = type === "ADVENTURER_INJECT_RECIPE" || type === "completion_inject";
+    var isExecute = type === "ADVENTURER_EXECUTE_RECIPE" || (type === "completion_inject" && (d.execute === true || d.execute === undefined));
+
+    if (isInject || isExecute) {
+        try {
+            var iframes = document.querySelectorAll("iframe");
+            for (var fi = 0; fi < iframes.length; fi++) {
+                var childFrame = iframes[fi];
+                if (childFrame && childFrame.contentWindow && childFrame.contentWindow !== e.source) {
+                    childFrame.contentWindow.postMessage(d, "*");
+                }
+            }
+        } catch (err) {}
+
+        var rawRecipe = d.recipe;
+        if (typeof rawRecipe === "string") {
+            try { rawRecipe = JSON.parse(rawRecipe); } catch (err) { rawRecipe = null; }
+        }
+        if (!rawRecipe) {
+            note("received empty or unreadable recipe payload", "warn");
+            return;
+        }
+
+        var norm = normalizeInjectedRecipe(rawRecipe);
+        if (!norm || !norm.recipe) {
+            note("injected recipe could not be normalized: " + (norm ? norm.reason : "unknown"), "warn");
+            return;
+        }
+
+        var recipe = norm.recipe;
+        note("recipe injected: " + (recipe.name || recipe.scene) + " (" + recipe.origin + ")", "info");
+
+        S.local = [recipe].concat(S.local.filter(function (r) {
+            return !(r.scene === recipe.scene && (!r.appId || r.appId === recipe.appId) && r.name === recipe.name);
+        }));
+
+        S.enabled = true;
+        reconcile();
+
+        if (isExecute) {
+            executeRecipeDirectly(recipe, "message:" + type);
+        }
+    }
 }));
 
 var polls = 0;
@@ -1181,6 +1729,11 @@ function boot() {
     if (app && typeof app.fire === "function") {
         S.app = app;
         reconcile();     // not update(CONFIG): a re-injection may have changed the config while this was polling
+        if (S.pendingExecution) {
+            var pending = S.pendingExecution;
+            S.pendingExecution = null;
+            executeRecipeDirectly(pending.recipe, pending.source + ":pending");
+        }
         return;
     }
     polls++;
@@ -1201,7 +1754,8 @@ export function buildCompletionScript(options: CompletionOptions): string {
         if (!/^\d+$/.test(appId) || !q) continue;
         quests[appId] = { questId: String(q.questId ?? ""), name: String(q.name ?? ""), enrolled: !!q.enrolled, completed: !!q.completed };
     }
-    const config = JSON.stringify({ recipes: Array.isArray(options?.recipes) ? options.recipes : [], quests });
+    const enabled = options?.enabled !== false;
+    const config = JSON.stringify({ recipes: Array.isArray(options?.recipes) ? options.recipes : [], quests, enabled });
     return "(function () {\n"
         + "    var CONFIG = " + config + ";\n"
         + "    CONFIG.local = " + LOCAL_PROFILES_EXPR + ";\n"

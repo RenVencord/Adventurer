@@ -67,20 +67,25 @@ export function buildVolumeScript(volumePercent: number, muted: boolean): string
         sm = manager;
         smDesc = protoDesc;
         smWanted = protoDesc.get.call(manager);
+        if (typeof smWanted !== "number" || smWanted <= 0) smWanted = 1;
         Object.defineProperty(manager, "volume", {
             configurable: true,
             enumerable: true,
             // Instances read this to compute their gain, so it has to return the scaled value.
             get: function () { return smWanted * factor(); },
-            set: function (v) { smWanted = Math.min(1, Math.max(0, Number(v))); smDesc.set.call(manager, smWanted); }
+            set: function (v) {
+                var num = Number(v);
+                if (Number.isFinite(num) && num > 0) smWanted = Math.min(1, Math.max(0, num));
+                smDesc.set.call(manager, smWanted * factor());
+            }
         });
-        smDesc.set.call(manager, smWanted);   // fires volumechange so running sounds re-read the scaled value
+        smDesc.set.call(manager, smWanted * factor());   // fires volumechange so running sounds re-read the scaled value
         return true;
     }
 
     function applyAll() {
         document.querySelectorAll("video,audio").forEach(applyMedia);
-        if (sm) smDesc.set.call(sm, smWanted);
+        if (sm) smDesc.set.call(sm, smWanted * factor());
     }
 
     // The game may create its sound manager and media after injection.
@@ -89,22 +94,249 @@ export function buildVolumeScript(volumePercent: number, muted: boolean): string
         tries++;
         hookSoundManager();
         applyAll();
+        setupHeaderSlider();
         if (tries > 240) clearInterval(timer);   // about a minute of retries, then rely on the setters
     }, 250);
     hookSoundManager();
     applyAll();
 
+    // ---- In-Experience Floating Header Bar Volume Slider (Outer Frame) -------------------------------------------
+    var sliderEl = null;
+    var rangeInput = null;
+    var pctLabel = null;
+    var targetBtn = null;
+    var isDragging = false;
+    var closeTimer = null;
+
+    function updateHeaderSliderUI() {
+        var isMuted = state.muted || state.volume === 0;
+        var pct = Math.round(state.volume * 100);
+
+        if (rangeInput) {
+            rangeInput.value = isMuted ? 0 : pct;
+        }
+        if (pctLabel) {
+            pctLabel.textContent = isMuted ? "MUTED" : (pct + "%");
+            pctLabel.style.color = isMuted ? "#f23f43" : "#dbdee1";
+        }
+    }
+
+    function notifyVolumeChange() {
+        try {
+            var iframes = document.querySelectorAll("iframe");
+            for (var i = 0; i < iframes.length; i++) {
+                if (iframes[i] && iframes[i].contentWindow) {
+                    iframes[i].contentWindow.postMessage({
+                        [TAG]: true,
+                        type: "volume",
+                        volume: state.volume,
+                        muted: state.muted
+                    }, "*");
+                }
+            }
+        } catch (e) {}
+
+        try {
+            if (window.top && window.top !== window) {
+                window.top.postMessage({
+                    __adventurerExperienceVolume: true,
+                    volume: Math.round(state.volume * 100),
+                    muted: state.muted
+                }, "*");
+            }
+        } catch (e) {}
+    }
+
+    function openHeaderSlider() {
+        if (!sliderEl) return;
+        if (closeTimer) { clearTimeout(closeTimer); closeTimer = null; }
+        sliderEl.style.width = "175px";
+        sliderEl.style.opacity = "1";
+        sliderEl.style.pointerEvents = "auto";
+        sliderEl.style.transform = "translateX(0)";
+    }
+
+    function closeHeaderSlider() {
+        if (!sliderEl || isDragging) return;
+        if (closeTimer) clearTimeout(closeTimer);
+        closeTimer = setTimeout(function () {
+            if (sliderEl && !isDragging) {
+                sliderEl.style.width = "0";
+                sliderEl.style.opacity = "0";
+                sliderEl.style.pointerEvents = "none";
+                sliderEl.style.transform = "translateX(10px)";
+            }
+        }, 350);
+    }
+
+    function onSoundButtonClick() {
+        setTimeout(function () {
+            if (!targetBtn) return;
+            var label = (targetBtn.getAttribute("aria-label") || "").toLowerCase();
+            state.muted = label.indexOf("unmute") !== -1;
+            if (!state.muted && state.volume === 0) {
+                state.volume = 1;
+            }
+            applyAll();
+            updateHeaderSliderUI();
+            notifyVolumeChange();
+        }, 50);
+    }
+
+    function onRangeInput(e) {
+        var val = Number(e.target.value);
+        state.volume = Math.min(1, Math.max(0, val / 100));
+        if (state.volume > 0 && state.muted) {
+            state.muted = false;
+        } else if (state.volume === 0) {
+            state.muted = true;
+        }
+        applyAll();
+        updateHeaderSliderUI();
+        notifyVolumeChange();
+    }
+
+    function onPointerDown() {
+        isDragging = true;
+    }
+
+    function onPointerUp() {
+        if (isDragging) {
+            isDragging = false;
+            closeHeaderSlider();
+        }
+    }
+
+    function findSoundButton() {
+        var bar = document.querySelector(".UAFalW_FloatingHeaderBar.UAFalW_isExpanded");
+        if (!bar) return null;
+        var container = bar.querySelector(".UAFalW_buttonsContainer");
+        if (container && container.children && container.children.length >= 3) {
+            var b3 = container.children[2];
+            if (b3 && b3.tagName === "BUTTON") return b3;
+        }
+        var btns = bar.querySelectorAll("button");
+        for (var i = 0; i < btns.length; i++) {
+            var label = (btns[i].getAttribute("aria-label") || "").toLowerCase();
+            if (label.indexOf("mute") !== -1) return btns[i];
+        }
+        return null;
+    }
+
+    function setupHeaderSlider() {
+        var host = document.querySelector(".iF1WSW_contentWrapper") || document.body;
+        if (!host) return;
+
+        targetBtn = findSoundButton();
+        if (!targetBtn) return;
+
+        if (!sliderEl) {
+            sliderEl = document.createElement("div");
+            sliderEl.id = "adventurer-header-volume-slider";
+            sliderEl.style.cssText = "position: absolute; height: 42px; display: flex; align-items: center; gap: 10px; background: rgba(30, 31, 34, 0.96); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); border: 1px solid rgba(255, 255, 255, 0.12); border-radius: 21px; box-shadow: 0 4px 18px rgba(0, 0, 0, 0.5); padding: 0 14px; box-sizing: border-box; z-index: 1000; width: 0; opacity: 0; pointer-events: none; transform: translateX(10px); overflow: hidden; transition: width 0.25s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.2s ease, transform 0.25s cubic-bezier(0.4, 0, 0.2, 1); user-select: none;";
+
+            rangeInput = document.createElement("input");
+            rangeInput.type = "range";
+            rangeInput.min = "0";
+            rangeInput.max = "100";
+            rangeInput.step = "1";
+            rangeInput.setAttribute("aria-label", "Activity volume percentage");
+            rangeInput.style.cssText = "width: 95px; height: 5px; accent-color: #5865f2; cursor: pointer; margin: 0;";
+            rangeInput.addEventListener("input", onRangeInput);
+            rangeInput.addEventListener("pointerdown", onPointerDown);
+            rangeInput.addEventListener("mousedown", onPointerDown);
+
+            pctLabel = document.createElement("span");
+            pctLabel.style.cssText = "min-width: 44px; text-align: right; font-size: 11px; font-weight: 700; color: #dbdee1; font-family: 'gg sans', 'Noto Sans', sans-serif; font-variant-numeric: tabular-nums;";
+
+            sliderEl.appendChild(rangeInput);
+            sliderEl.appendChild(pctLabel);
+
+            sliderEl.addEventListener("mouseenter", openHeaderSlider);
+            sliderEl.addEventListener("mouseleave", closeHeaderSlider);
+
+            window.addEventListener("pointerup", onPointerUp);
+            window.addEventListener("mouseup", onPointerUp);
+        }
+
+        var rect = targetBtn.getBoundingClientRect();
+        if (rect.width > 0 && rect.height > 0) {
+            sliderEl.style.top = (rect.top + (rect.height - 42) / 2) + "px";
+            sliderEl.style.right = (window.innerWidth - rect.left + 8) + "px";
+        }
+
+        if (sliderEl.parentElement !== host) {
+            host.appendChild(sliderEl);
+        }
+
+        if (!targetBtn._adventurerHooked) {
+            targetBtn._adventurerHooked = true;
+            targetBtn.addEventListener("mouseenter", openHeaderSlider);
+            targetBtn.addEventListener("mouseleave", closeHeaderSlider);
+            targetBtn.addEventListener("click", onSoundButtonClick);
+        }
+
+        updateHeaderSliderUI();
+    }
+
+    function checkUI() {
+        var bar = document.querySelector(".UAFalW_FloatingHeaderBar");
+        var isExpanded = !!(bar && bar.classList.contains("UAFalW_isExpanded"));
+        if (sliderEl) {
+            sliderEl.style.display = isExpanded ? "flex" : "none";
+            if (!isExpanded) {
+                sliderEl.style.width = "0";
+                sliderEl.style.opacity = "0";
+                sliderEl.style.pointerEvents = "none";
+                sliderEl.style.transform = "translateX(10px)";
+            }
+        }
+        if (isExpanded) {
+            setupHeaderSlider();
+        }
+    }
+
+    var tries = 0;
+    var timer = setInterval(function () {
+        tries++;
+        hookSoundManager();
+        applyAll();
+        checkUI();
+        if (tries > 240) clearInterval(timer);
+    }, 250);
+    hookSoundManager();
+    applyAll();
+    checkUI();
+
     window.addEventListener("message", function (e) {
-        var d = e.data;
-        if (e.source !== window.parent || !d || !d[TAG] || d.type !== "volume") return;
+        var d = e && e.data;
+        if (!d || !d[TAG] || d.type !== "volume") return;
         state.volume = Math.min(1, Math.max(0, Number(d.volume)));
         state.muted = !!d.muted;
         applyAll();
+        updateHeaderSliderUI();
+
+        // Forward down to child iframes if this is an outer container frame
+        try {
+            var iframes = document.querySelectorAll("iframe");
+            for (var i = 0; i < iframes.length; i++) {
+                if (iframes[i] && iframes[i].contentWindow && iframes[i].contentWindow !== e.source) {
+                    iframes[i].contentWindow.postMessage(d, "*");
+                }
+            }
+        } catch (err) {}
     });
 
     window.__adventurerVolume = {
-        set: function (v, m) { state.volume = v; state.muted = !!m; applyAll(); },
-        state: function () { return { volume: state.volume, muted: state.muted, soundManager: !!sm }; }
+        set: function (v, m) {
+            state.volume = Math.min(1, Math.max(0, Number(v)));
+            state.muted = !!m;
+            applyAll();
+            updateHeaderSliderUI();
+        },
+        state: function () {
+            return { volume: state.volume, muted: state.muted, soundManager: !!sm, hasSlider: !!sliderEl };
+        }
     };
 })();`;
 }

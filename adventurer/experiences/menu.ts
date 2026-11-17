@@ -1,18 +1,22 @@
 /*
- * Adventurer: in-experience button and menu for toggling features (ESP, Minimap, Auto-complete).
+ * Adventurer: in-experience button and menu for toggling features (ESP, Minimap, Auto-complete)
+ * and managing Quest Recipe Recording with strict share gating.
  *
- * buildMenuScript() returns plain JS source that is injected into the
- * activity iframe.
+ * buildMenuScript() returns plain JS source that is injected into the activity iframe.
  *
  * Rules:
  *  - Only erasable TypeScript syntax (so node can import it directly).
  *  - Self-contained, idempotent, no external network dependencies.
+ *  - No em-dash or en-dash characters in string literals or comments.
  */
 
 export interface MenuOptions {
     esp: boolean;
     minimap: boolean;
     autoComplete: boolean;
+    recording?: boolean;
+    questAppIds?: string[];
+    isPip?: boolean;
 }
 
 export const MENU_MESSAGE_TAG = "__adventurerOverlay";
@@ -27,7 +31,10 @@ export function buildMenuScript(options: MenuOptions): string {
     const initial = {
         esp: !!options.esp,
         minimap: !!options.minimap,
-        autoComplete: !!options.autoComplete
+        autoComplete: !!options.autoComplete,
+        recording: !!options.recording,
+        questAppIds: options.questAppIds || [],
+        isPip: !!options.isPip
     };
 
     return `(function () {
@@ -48,38 +55,122 @@ export function buildMenuScript(options: MenuOptions): string {
         // Cross-origin parent: this is the top-most frame of the activity.
     }
 
+    // Gate to quest experiences only: if allowed questAppIds are specified and this frame's app ID is not included, do not mount.
+    var allowedQuestAppIds = ${JSON.stringify(initial.questAppIds)};
+    if (allowedQuestAppIds && allowedQuestAppIds.length > 0) {
+        var currentAppId = "";
+        try {
+            var hostname = window.location.hostname || "";
+            var dotIdx = hostname.indexOf(".");
+            currentAppId = dotIdx > 0 ? hostname.substring(0, dotIdx) : hostname;
+        } catch (e) {}
+        if (currentAppId && allowedQuestAppIds.indexOf(currentAppId) === -1) {
+            return;
+        }
+    }
+
+    var initialSavedRecipe = null;
+    try {
+        var _advProfiles = __ADVENTURER_PROFILES__;
+        if (Array.isArray(_advProfiles)) {
+            for (var _pi = 0; _pi < _advProfiles.length; _pi++) {
+                var _pr = _advProfiles[_pi];
+                if (_pr && _pr.format === "advrecipe" && _pr.version === 1 && _pr.verifiedCompletion === true) {
+                    initialSavedRecipe = _pr;
+                    break;
+                }
+            }
+        }
+    } catch (e) {}
+
     var state = {
         open: false,
         esp: ${initial.esp},
         minimap: ${initial.minimap},
-        autoComplete: ${initial.autoComplete}
+        autoComplete: ${initial.autoComplete},
+        recordingState: ${initial.recording ? '"recording"' : '"idle"'},
+        eventCount: 0,
+        elapsedSeconds: 0,
+        timerId: null,
+        lastRecipe: null,
+        savedRecipe: initialSavedRecipe,
+        isPip: ${initial.isPip}
     };
 
     var switchRenders = {};
     var badgeEl = null;
     var menuEl = null;
+    var btnEl = null;
+    var recipePanelEl = null;
 
-    function notifyToggle(feature, enabled) {
-        var baseMsg = { [TAG]: true, type: feature === "esp" ? "state" : (feature === "minimap" ? "minimap" : "completion"), enabled: enabled };
-        var stateMsg = { [TAG]: true, type: "menu_state", [feature]: enabled };
+    function canShareRecipe(recipe) {
+        if (!recipe || typeof recipe !== "object") return false;
+        return recipe.format === "advrecipe" && recipe.version === 1 && recipe.verifiedCompletion === true;
+    }
 
-        // 1. Notify current window
-        window.postMessage(baseMsg, "*");
-        window.postMessage(stateMsg, "*");
+    function formatTime(totalSeconds) {
+        var mins = Math.floor(totalSeconds / 60);
+        var secs = totalSeconds % 60;
+        return (mins < 10 ? "0" + mins : mins) + ":" + (secs < 10 ? "0" + secs : secs);
+    }
 
-        // 2. Notify all child iframes (such as inner game frames)
+    function injectStyles() {
+        if (document.getElementById("adventurer-menu-styles")) return;
+        var style = document.createElement("style");
+        style.id = "adventurer-menu-styles";
+        style.textContent = [
+            "@keyframes adv-pulse {",
+            "  0% { transform: scale(0.92); box-shadow: 0 0 0 0 rgba(224, 62, 86, 0.8); }",
+            "  70% { transform: scale(1.15); box-shadow: 0 0 0 7px rgba(224, 62, 86, 0); }",
+            "  100% { transform: scale(0.92); box-shadow: 0 0 0 0 rgba(224, 62, 86, 0); }",
+            "}",
+            "@keyframes adv-ring-pulse {",
+            "  0% { box-shadow: 0 0 0 0 rgba(224, 62, 86, 0.7), 0 4px 14px rgba(0, 0, 0, 0.4); }",
+            "  70% { box-shadow: 0 0 0 10px rgba(224, 62, 86, 0), 0 4px 14px rgba(0, 0, 0, 0.4); }",
+            "  100% { box-shadow: 0 0 0 0 rgba(224, 62, 86, 0), 0 4px 14px rgba(0, 0, 0, 0.4); }",
+            "}",
+            ".pulsing-dot {",
+            "  display: inline-block;",
+            "  width: 8px;",
+            "  height: 8px;",
+            "  border-radius: 50%;",
+            "  background-color: #e03e56;",
+            "  animation: adv-pulse 1.4s infinite ease-in-out;",
+            "  flex-shrink: 0;",
+            "}",
+            "@media (max-width: 520px), (max-height: 380px) {",
+            "  #adventurer-experience-bar {",
+            "    display: none !important;",
+            "  }",
+            "}"
+        ].join("\\n");
+        (document.head || document.body || document.documentElement).appendChild(style);
+    }
+
+    function broadcastMessage(msg) {
+        window.postMessage(msg, "*");
         try {
             var iframes = document.querySelectorAll("iframe");
             for (var i = 0; i < iframes.length; i++) {
                 var f = iframes[i];
                 if (f && f.contentWindow) {
-                    f.contentWindow.postMessage(baseMsg, "*");
-                    f.contentWindow.postMessage(stateMsg, "*");
+                    f.contentWindow.postMessage(msg, "*");
                 }
             }
         } catch (err) {}
+        try {
+            if (window.top && window.top !== window) {
+                window.top.postMessage(msg, "*");
+            }
+        } catch (err) {}
+    }
 
-        // 3. Notify parent/top window (Discord renderer / Vencord settings)
+    function notifyToggle(feature, enabled) {
+        var baseMsg = { [TAG]: true, type: feature === "esp" ? "state" : (feature === "minimap" ? "minimap" : "completion"), enabled: enabled };
+        var stateMsg = { [TAG]: true, type: "menu_state", [feature]: enabled };
+        broadcastMessage(baseMsg);
+        broadcastMessage(stateMsg);
+
         try {
             if (window.top && window.top !== window) {
                 window.top.postMessage({
@@ -93,10 +184,21 @@ export function buildMenuScript(options: MenuOptions): string {
 
     function updateBadgeIcon() {
         if (!badgeEl) return;
-        if (state.open) {
+        if (state.recordingState === "recording") {
+            badgeEl.innerHTML = '<span class="pulsing-dot" style="width: 7px; height: 7px;"></span>';
+        } else if (state.open) {
             badgeEl.innerHTML = '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#dbdee1" stroke-width="3" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>';
         } else {
             badgeEl.innerHTML = '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#dbdee1" stroke-width="3" stroke-linecap="round"><polyline points="6 9 12 15 18 9"></polyline></svg>';
+        }
+
+        if (btnEl) {
+            if (state.recordingState === "recording") {
+                btnEl.style.animation = "adv-ring-pulse 2s infinite ease-out";
+            } else {
+                btnEl.style.animation = "none";
+                btnEl.style.boxShadow = "0 4px 14px rgba(0,0,0,0.4)";
+            }
         }
     }
 
@@ -104,6 +206,296 @@ export function buildMenuScript(options: MenuOptions): string {
         state.open = !!open;
         if (menuEl) menuEl.style.display = state.open ? "block" : "none";
         updateBadgeIcon();
+    }
+
+    function startRecordingSession() {
+        if (state.recordingState === "recording") return;
+
+        state.recordingState = "recording";
+        state.eventCount = 0;
+        state.elapsedSeconds = 0;
+        state.lastRecipe = null;
+
+        if (state.timerId) clearInterval(state.timerId);
+        state.timerId = setInterval(function () {
+            state.elapsedSeconds++;
+            var timerEl = document.getElementById("adventurer-recording-timer");
+            if (timerEl) timerEl.textContent = formatTime(state.elapsedSeconds);
+        }, 1000);
+
+        updateBadgeIcon();
+        renderRecipeSection();
+
+        broadcastMessage({ [TAG]: true, type: "START_RECIPE_RECORDING" });
+        broadcastMessage({ [TAG]: true, type: "menu_state", recording: true });
+    }
+
+    function stopRecordingSession(manual) {
+        if (state.timerId) {
+            clearInterval(state.timerId);
+            state.timerId = null;
+        }
+
+        if (manual) {
+            state.recordingState = "incomplete";
+            broadcastMessage({ [TAG]: true, type: "STOP_RECIPE_RECORDING" });
+        }
+
+        updateBadgeIcon();
+        renderRecipeSection();
+        broadcastMessage({ [TAG]: true, type: "menu_state", recording: false });
+    }
+
+    function resetRecordingSession() {
+        if (state.timerId) {
+            clearInterval(state.timerId);
+            state.timerId = null;
+        }
+        state.recordingState = "idle";
+        state.eventCount = 0;
+        state.elapsedSeconds = 0;
+        state.lastRecipe = null;
+
+        updateBadgeIcon();
+        renderRecipeSection();
+
+        broadcastMessage({ [TAG]: true, type: "RESET_RECIPE_RECORDING" });
+        broadcastMessage({ [TAG]: true, type: "menu_state", recording: false });
+    }
+
+    function renderRecipeSection() {
+        if (!recipePanelEl) return;
+        recipePanelEl.innerHTML = "";
+
+        if (state.recordingState === "idle") {
+            // STATE 1: IDLE
+            var btnRecord = document.createElement("button");
+            btnRecord.id = "adventurer-btn-record";
+            btnRecord.setAttribute("aria-label", "Record recipe");
+            btnRecord.style.cssText = "display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; height: 34px; border-radius: 8px; background: #5865f2; color: #ffffff; border: none; font-size: 13px; font-weight: 600; cursor: pointer; transition: background 0.15s ease, transform 0.05s ease;";
+            btnRecord.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="#e03e56"><circle cx="12" cy="12" r="7"/></svg><span>Record recipe</span>';
+            btnRecord.onmouseenter = function () { btnRecord.style.background = "#4752c4"; };
+            btnRecord.onmouseleave = function () { btnRecord.style.background = "#5865f2"; };
+            btnRecord.onmousedown = function () { btnRecord.style.transform = "scale(0.98)"; };
+            btnRecord.onmouseup = function () { btnRecord.style.transform = "scale(1)"; };
+            btnRecord.onclick = function (e) {
+                e.stopPropagation();
+                startRecordingSession();
+            };
+
+            var hint = document.createElement("div");
+            hint.style.cssText = "font-size: 10px; color: #949ba4; margin-top: 5px; text-align: center; line-height: 1.2;";
+            hint.textContent = "Captures quest events automatically";
+
+            recipePanelEl.appendChild(btnRecord);
+            recipePanelEl.appendChild(hint);
+
+            if (canShareRecipe(state.savedRecipe)) {
+                var savedWrap = document.createElement("div");
+                savedWrap.id = "adventurer-saved-recipe-card";
+                savedWrap.style.cssText = "margin-top: 8px; padding: 8px; border-radius: 8px; background: rgba(35, 165, 90, 0.1); border: 1px solid rgba(35, 165, 90, 0.28);";
+
+                var savedSteps = (state.savedRecipe.completion && state.savedRecipe.completion.entries)
+                    ? state.savedRecipe.completion.entries.length : 0;
+
+                var savedTitle = document.createElement("div");
+                savedTitle.style.cssText = "display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px;";
+                savedTitle.innerHTML = '<span style="font-size: 11px; font-weight: 700; color: #23a55a;">Saved Recipe</span><span style="font-size: 10px; color: #949ba4;">' + savedSteps + ' steps</span>';
+
+                var btnShareSaved = document.createElement("button");
+                btnShareSaved.id = "adventurer-btn-share-saved";
+                btnShareSaved.style.cssText = "display: flex; align-items: center; justify-content: center; gap: 6px; width: 100%; height: 28px; border-radius: 6px; border: none; font-size: 11px; font-weight: 600; background: #23a55a; color: #ffffff; cursor: pointer; transition: background 0.15s ease;";
+                btnShareSaved.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"></path><polyline points="16 6 12 2 8 6"></polyline><line x1="12" y1="2" x2="12" y2="15"></line></svg><span>Share Saved Recipe</span>';
+                btnShareSaved.onmouseenter = function () { btnShareSaved.style.background = "#1e8e4c"; };
+                btnShareSaved.onmouseleave = function () { btnShareSaved.style.background = "#23a55a"; };
+                btnShareSaved.onclick = function (e) {
+                    e.stopPropagation();
+                    broadcastMessage({
+                        [TAG]: true,
+                        __adventurerShareRecipe: true,
+                        type: "SHARE_RECIPE",
+                        recipe: state.savedRecipe
+                    });
+                };
+
+                var btnTestSaved = document.createElement("button");
+                btnTestSaved.id = "adventurer-btn-execute-saved";
+                btnTestSaved.style.cssText = "display: block; width: 100%; background: none; border: none; font-size: 10px; color: #949ba4; cursor: pointer; padding: 4px 0 0 0; text-decoration: underline; text-align: center;";
+                btnTestSaved.textContent = "Test Run Saved Recipe";
+                btnTestSaved.onclick = function (e) {
+                    e.stopPropagation();
+                    broadcastMessage({
+                        [TAG]: true,
+                        type: "ADVENTURER_EXECUTE_RECIPE",
+                        recipe: state.savedRecipe
+                    });
+                };
+
+                savedWrap.appendChild(savedTitle);
+                savedWrap.appendChild(btnShareSaved);
+                savedWrap.appendChild(btnTestSaved);
+                recipePanelEl.appendChild(savedWrap);
+            }
+
+        } else if (state.recordingState === "recording") {
+            // STATE 2: RECORDING
+            var pill = document.createElement("div");
+            pill.style.cssText = "display: flex; align-items: center; justify-content: space-between; padding: 6px 8px; border-radius: 6px; background: rgba(224, 62, 86, 0.15); border: 1px solid rgba(224, 62, 86, 0.3); margin-bottom: 8px;";
+
+            var left = document.createElement("div");
+            left.style.cssText = "display: flex; align-items: center; gap: 6px;";
+            left.innerHTML = '<span class="pulsing-dot"></span><span id="adventurer-recording-counter" style="font-size: 12px; font-weight: 600; color: #f2f3f5;">Recording (' + state.eventCount + ')</span>';
+
+            var timerSpan = document.createElement("span");
+            timerSpan.id = "adventurer-recording-timer";
+            timerSpan.style.cssText = "font-size: 11px; font-weight: 500; color: #949ba4; font-variant-numeric: tabular-nums;";
+            timerSpan.textContent = formatTime(state.elapsedSeconds);
+
+            pill.appendChild(left);
+            pill.appendChild(timerSpan);
+
+            var guide = document.createElement("div");
+            guide.style.cssText = "font-size: 10px; color: #949ba4; margin-bottom: 8px; line-height: 1.3;";
+            guide.textContent = "Complete quest in-game. Auto-stops on goal.";
+
+            var btnStop = document.createElement("button");
+            btnStop.id = "adventurer-btn-stop";
+            btnStop.style.cssText = "display: flex; align-items: center; justify-content: center; gap: 6px; width: 100%; height: 32px; border-radius: 8px; background: #e03e56; color: #ffffff; border: none; font-size: 12px; font-weight: 600; cursor: pointer; transition: background 0.15s ease;";
+            btnStop.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><rect x="5" y="5" width="14" height="14" rx="2"/></svg><span>Stop Recording</span>';
+            btnStop.onmouseenter = function () { btnStop.style.background = "#c0344b"; };
+            btnStop.onmouseleave = function () { btnStop.style.background = "#e03e56"; };
+            btnStop.onclick = function (e) {
+                e.stopPropagation();
+                stopRecordingSession(true);
+            };
+
+            recipePanelEl.appendChild(pill);
+            recipePanelEl.appendChild(guide);
+            recipePanelEl.appendChild(btnStop);
+
+        } else if (state.recordingState === "completed") {
+            // STATE 3: COMPLETED
+            var card = document.createElement("div");
+            card.style.cssText = "display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 6px; background: rgba(35, 165, 90, 0.15); border: 1px solid rgba(35, 165, 90, 0.3); margin-bottom: 8px;";
+            var stepsCount = (state.lastRecipe && state.lastRecipe.completion && state.lastRecipe.completion.entries)
+                ? state.lastRecipe.completion.entries.length : 0;
+            var durationStr = formatTime(state.elapsedSeconds);
+            card.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#23a55a" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>' +
+                '<div style="display: flex; flex-direction: column;">' +
+                '<span style="font-size: 12px; font-weight: 700; color: #23a55a;">Recipe Ready</span>' +
+                '<span style="font-size: 10px; color: #949ba4;">Goal verified - ' + stepsCount + ' steps (' + durationStr + ')</span>' +
+                '</div>';
+
+            var canShare = canShareRecipe(state.lastRecipe);
+
+            var btnShare = document.createElement("button");
+            btnShare.id = "adventurer-btn-share";
+            btnShare.disabled = !canShare;
+            btnShare.style.cssText = "display: flex; align-items: center; justify-content: center; gap: 6px; width: 100%; height: 32px; border-radius: 8px; border: none; font-size: 12px; font-weight: 600; transition: background 0.15s ease, opacity 0.15s ease; " +
+                (canShare ? "background: #5865f2; color: #ffffff; cursor: pointer; opacity: 1.0;" : "background: #4e5058; color: #949ba4; cursor: not-allowed; opacity: 0.5; pointer-events: none;");
+            btnShare.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"></path><polyline points="16 6 12 2 8 6"></polyline><line x1="12" y1="2" x2="12" y2="15"></line></svg><span>' +
+                (canShare ? "Share Recipe" : "Complete Quest to Share") + '</span>';
+            if (canShare) {
+                btnShare.onmouseenter = function () { btnShare.style.background = "#4752c4"; };
+                btnShare.onmouseleave = function () { btnShare.style.background = "#5865f2"; };
+            }
+            btnShare.onclick = function (e) {
+                e.stopPropagation();
+                if (!canShareRecipe(state.lastRecipe)) return;
+                broadcastMessage({
+                    [TAG]: true,
+                    __adventurerShareRecipe: true,
+                    type: "SHARE_RECIPE",
+                    recipe: state.lastRecipe
+                });
+            };
+
+            var btnSave = document.createElement("button");
+            btnSave.id = "adventurer-btn-save";
+            btnSave.style.cssText = "display: flex; align-items: center; justify-content: center; gap: 6px; width: 100%; height: 30px; border-radius: 8px; background: #35373c; color: #dbdee1; border: 1px solid rgba(255, 255, 255, 0.08); font-size: 11px; font-weight: 600; cursor: pointer; margin-top: 6px; transition: background 0.15s ease;";
+            btnSave.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg><span>Save to Disk</span>';
+            btnSave.onmouseenter = function () { btnSave.style.background = "#404249"; };
+            btnSave.onmouseleave = function () { btnSave.style.background = "#35373c"; };
+            btnSave.onclick = function (e) {
+                e.stopPropagation();
+                broadcastMessage({
+                    [TAG]: true,
+                    __adventurerSaveRecipe: true,
+                    type: "SAVE_RECIPE",
+                    recipe: state.lastRecipe
+                });
+                btnSave.innerHTML = '<span>Saved to Disk!</span>';
+                setTimeout(function () {
+                    btnSave.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg><span>Save to Disk</span>';
+                }, 2000);
+            };
+
+            var footer = document.createElement("div");
+            footer.style.cssText = "display: flex; align-items: center; justify-content: space-between; margin-top: 8px;";
+
+            var btnRun = document.createElement("button");
+            btnRun.id = "adventurer-btn-execute";
+            btnRun.style.cssText = "background: none; border: none; font-size: 11px; color: #5865f2; cursor: pointer; padding: 0; text-decoration: underline;";
+            btnRun.textContent = "Test Run";
+            btnRun.onclick = function (e) {
+                e.stopPropagation();
+                broadcastMessage({
+                    [TAG]: true,
+                    type: "ADVENTURER_EXECUTE_RECIPE",
+                    recipe: state.lastRecipe
+                });
+            };
+
+            var btnReset = document.createElement("button");
+            btnReset.id = "adventurer-btn-reset";
+            btnReset.style.cssText = "background: none; border: none; font-size: 11px; color: #949ba4; cursor: pointer; padding: 0;";
+            btnReset.textContent = "New Recording";
+            btnReset.onclick = function (e) {
+                e.stopPropagation();
+                resetRecordingSession();
+            };
+
+            footer.appendChild(btnRun);
+            footer.appendChild(btnReset);
+
+            recipePanelEl.appendChild(card);
+            recipePanelEl.appendChild(btnShare);
+            recipePanelEl.appendChild(btnSave);
+            recipePanelEl.appendChild(footer);
+
+        } else if (state.recordingState === "incomplete") {
+            // STATE 4: INCOMPLETE / FAILED
+            var warn = document.createElement("div");
+            warn.style.cssText = "display: flex; align-items: flex-start; gap: 8px; padding: 8px; border-radius: 6px; background: rgba(240, 178, 50, 0.15); border: 1px solid rgba(240, 178, 50, 0.3); margin-bottom: 8px;";
+            var durationStr = formatTime(state.elapsedSeconds);
+            warn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#f0b232" stroke-width="2.5"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>' +
+                '<div style="display: flex; flex-direction: column;">' +
+                '<span style="font-size: 11px; font-weight: 700; color: #f0b232;">Quest Not Completed</span>' +
+                '<span style="font-size: 10px; color: #949ba4; line-height: 1.3; margin-top: 2px;">Stopped after ' + durationStr + '. Recipes cannot be shared until goal is reached.</span>' +
+                '</div>';
+
+            var btnBlockedShare = document.createElement("button");
+            btnBlockedShare.id = "adventurer-btn-share-disabled";
+            btnBlockedShare.disabled = true;
+            btnBlockedShare.style.cssText = "width: 100%; height: 32px; border-radius: 8px; border: none; font-size: 12px; font-weight: 600; background: #4e5058; color: #949ba4; cursor: not-allowed; opacity: 0.5; pointer-events: none;";
+            btnBlockedShare.textContent = "Complete Quest to Share";
+
+            var btnRetry = document.createElement("button");
+            btnRetry.id = "adventurer-btn-retry";
+            btnRetry.style.cssText = "display: flex; align-items: center; justify-content: center; gap: 6px; width: 100%; height: 30px; border-radius: 8px; background: #5865f2; color: #ffffff; border: none; font-size: 12px; font-weight: 600; cursor: pointer; margin-top: 6px; transition: background 0.15s ease;";
+            btnRetry.textContent = "Try Again";
+            btnRetry.onmouseenter = function () { btnRetry.style.background = "#4752c4"; };
+            btnRetry.onmouseleave = function () { btnRetry.style.background = "#5865f2"; };
+            btnRetry.onclick = function (e) {
+                e.stopPropagation();
+                resetRecordingSession();
+                startRecordingSession();
+            };
+
+            recipePanelEl.appendChild(warn);
+            recipePanelEl.appendChild(btnBlockedShare);
+            recipePanelEl.appendChild(btnRetry);
+        }
     }
 
     function createUI() {
@@ -115,45 +507,45 @@ export function buildMenuScript(options: MenuOptions): string {
             return;
         }
 
+        injectStyles();
+
         var container = document.createElement("div");
         container.id = "adventurer-experience-bar";
         container.style.cssText = "position: absolute; top: 15px; left: 15px; z-index: 2147483646; font-family: 'gg sans', 'Noto Sans', sans-serif; user-select: none;";
 
-        // Expand Button (mirrors the game's FloatingHeaderBar button)
-        var btn = document.createElement("button");
-        btn.id = "adventurer-experience-btn";
-        btn.setAttribute("aria-label", "Adventurer Menu");
-        btn.style.cssText = "position: relative; width: 60px; height: 60px; border-radius: 50%; background: #262626; border: none; cursor: pointer; display: flex; align-items: center; justify-content: center; padding: 0; box-shadow: 0 4px 14px rgba(0,0,0,0.4); transition: transform 0.15s ease, background-color 0.2s ease;";
+        btnEl = document.createElement("button");
+        btnEl.id = "adventurer-experience-btn";
+        btnEl.setAttribute("aria-label", "Adventurer Menu");
+        btnEl.style.cssText = "position: relative; width: 60px; height: 60px; border-radius: 50%; background: #262626; border: none; cursor: pointer; display: flex; align-items: center; justify-content: center; padding: 0; box-shadow: 0 4px 14px rgba(0,0,0,0.4); transition: transform 0.15s ease, background-color 0.2s ease;";
 
         var logo = document.createElement("img");
         logo.src = ${JSON.stringify(LOGO_DATA_URI)};
         logo.alt = "Adventurer";
         logo.style.cssText = "width: 42px; height: 42px; border-radius: 50%; object-fit: cover; transition: transform 0.2s cubic-bezier(0.5, 0.33, 0.33, 1); pointer-events: none;";
-        btn.appendChild(logo);
+        btnEl.appendChild(logo);
 
         badgeEl = document.createElement("div");
         badgeEl.style.cssText = "position: absolute; bottom: -4px; left: 16px; width: 28px; height: 13px; border-radius: 8px; background: #383838; display: flex; align-items: center; justify-content: center; transition: filter 0.2s ease, background 0.2s ease; pointer-events: none;";
         updateBadgeIcon();
-        btn.appendChild(badgeEl);
+        btnEl.appendChild(badgeEl);
 
-        btn.onmouseenter = function () {
+        btnEl.onmouseenter = function () {
             logo.style.transform = "scale(1.1)";
             badgeEl.style.filter = "brightness(1.4)";
         };
-        btn.onmouseleave = function () {
+        btnEl.onmouseleave = function () {
             logo.style.transform = "scale(1)";
             badgeEl.style.filter = "brightness(1)";
         };
 
-        btn.onclick = function (e) {
+        btnEl.onclick = function (e) {
             e.stopPropagation();
             setMenuOpen(!state.open);
         };
 
-        // Menu Card
         menuEl = document.createElement("div");
         menuEl.id = "adventurer-experience-menu";
-        menuEl.style.cssText = "position: absolute; top: 68px; left: 0; width: 220px; background: rgba(30, 31, 34, 0.95); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); border: 1px solid rgba(255, 255, 255, 0.12); border-radius: 14px; box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6); padding: 12px; display: " + (state.open ? "block" : "none") + ";";
+        menuEl.style.cssText = "position: absolute; top: 68px; left: 0; width: 236px; background: rgba(30, 31, 34, 0.95); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); border: 1px solid rgba(255, 255, 255, 0.12); border-radius: 14px; box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6); padding: 12px; display: " + (state.open ? "block" : "none") + ";";
 
         var header = document.createElement("div");
         header.style.cssText = "display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; padding-bottom: 8px; border-bottom: 1px solid rgba(255, 255, 255, 0.08);";
@@ -173,7 +565,7 @@ export function buildMenuScript(options: MenuOptions): string {
             {
                 id: "minimap",
                 label: "Minimap",
-                desc: "POIs & navigation",
+                desc: "POIs and navigation",
                 icon: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="3 6 9 3 15 6 21 3 21 18 15 21 9 18 3 21"></polygon><line x1="9" y1="3" x2="9" y2="18"></line><line x1="15" y1="6" x2="15" y2="21"></line></svg>'
             },
             {
@@ -206,7 +598,6 @@ export function buildMenuScript(options: MenuOptions): string {
             left.appendChild(iconBox);
             left.appendChild(textCol);
 
-            // Toggle switch
             var track = document.createElement("div");
             track.style.cssText = "position: relative; width: 34px; height: 18px; border-radius: 9px; transition: background 0.2s ease; cursor: pointer; flex-shrink: 0;";
 
@@ -235,31 +626,129 @@ export function buildMenuScript(options: MenuOptions): string {
 
         menuEl.appendChild(itemsList);
 
-        container.appendChild(btn);
-        container.appendChild(menuEl);
+        var divider = document.createElement("div");
+        divider.style.cssText = "height: 1px; background: rgba(255, 255, 255, 0.08); margin: 10px 0 8px 0;";
+        menuEl.appendChild(divider);
 
-        // Outside click listener to collapse menu
+        var recipeHeader = document.createElement("div");
+        recipeHeader.style.cssText = "display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px;";
+        recipeHeader.innerHTML = '<span style="font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: #949ba4;">Quest Recipe</span>';
+        menuEl.appendChild(recipeHeader);
+
+        recipePanelEl = document.createElement("div");
+        recipePanelEl.id = "adventurer-recipe-panel";
+        menuEl.appendChild(recipePanelEl);
+        renderRecipeSection();
+
+        container.appendChild(btnEl);
+        container.appendChild(menuEl);
+        host.appendChild(container);
+
+        function updatePipVisibility() {
+            var bar = document.getElementById("adventurer-experience-bar") || container;
+            if (!bar) return;
+            var isSmall = (window.innerWidth <= 520 || window.innerHeight <= 380);
+            if (isSmall || state.isPip) {
+                bar.style.setProperty("display", "none", "important");
+            } else {
+                bar.style.removeProperty("display");
+            }
+        }
+        window.addEventListener("resize", updatePipVisibility);
+        updatePipVisibility();
+
         document.addEventListener("click", function (e) {
             if (state.open && !container.contains(e.target)) {
                 setMenuOpen(false);
             }
         });
 
-        host.appendChild(container);
+        document.addEventListener("keydown", function (e) {
+            if (e.key === "Escape" && state.open) {
+                setMenuOpen(false);
+            }
+        });
     }
 
     createUI();
 
-    // Listen for state synchronization messages from parent or settings
     window.addEventListener("message", function (e) {
         var d = e && e.data;
         if (!d) return;
+
+        if (d.type === "pip_state") {
+            state.isPip = !!d.isPip;
+            var bar = document.getElementById("adventurer-experience-bar");
+            if (bar) {
+                var isSmall = (window.innerWidth <= 520 || window.innerHeight <= 380);
+                if (isSmall || state.isPip) {
+                    bar.style.setProperty("display", "none", "important");
+                } else {
+                    bar.style.removeProperty("display");
+                }
+            }
+            return;
+        }
+
+        if (d.type === "RECIPE_RECORDING_PROGRESS" && typeof d.count === "number") {
+            state.eventCount = d.count;
+            var counterEl = document.getElementById("adventurer-recording-counter");
+            if (counterEl) counterEl.textContent = "Recording (" + state.eventCount + ")";
+            return;
+        }
+
+        if (d.type === "RECIPE_RECORDING_COMPLETED") {
+            var recipe = d.recipe;
+            state.lastRecipe = recipe;
+            if (state.timerId) {
+                clearInterval(state.timerId);
+                state.timerId = null;
+            }
+            if (recipe && recipe.verifiedCompletion === true) {
+                state.recordingState = "completed";
+                state.savedRecipe = recipe;
+                broadcastMessage({
+                    [TAG]: true,
+                    __adventurerSaveRecipe: true,
+                    type: "SAVE_RECIPE",
+                    recipe: recipe
+                });
+            } else {
+                state.recordingState = "incomplete";
+            }
+            updateBadgeIcon();
+            renderRecipeSection();
+            return;
+        }
+
+        if (d.type === "START_RECIPE_RECORDING") {
+            if (state.recordingState !== "recording") {
+                startRecordingSession();
+            }
+            return;
+        }
+
+        if (d.type === "STOP_RECIPE_RECORDING") {
+            if (state.recordingState === "recording") {
+                stopRecordingSession(true);
+            }
+            return;
+        }
+
+        if (d.type === "RESET_RECIPE_RECORDING") {
+            resetRecordingSession();
+            return;
+        }
 
         if (d[TAG]) {
             if (d.type === "menu_state") {
                 if (typeof d.esp === "boolean") { state.esp = d.esp; if (switchRenders.esp) switchRenders.esp(d.esp); }
                 if (typeof d.minimap === "boolean") { state.minimap = d.minimap; if (switchRenders.minimap) switchRenders.minimap(d.minimap); }
                 if (typeof d.autoComplete === "boolean") { state.autoComplete = d.autoComplete; if (switchRenders.autoComplete) switchRenders.autoComplete(d.autoComplete); }
+                if (typeof d.recording === "boolean") {
+                    if (d.recording && state.recordingState !== "recording") startRecordingSession();
+                    else if (!d.recording && state.recordingState === "recording") stopRecordingSession(false);
+                }
             } else if (d.type === "state" && typeof d.enabled === "boolean") {
                 state.esp = d.enabled;
                 if (switchRenders.esp) switchRenders.esp(d.enabled);
@@ -271,7 +760,6 @@ export function buildMenuScript(options: MenuOptions): string {
                 if (switchRenders.autoComplete) switchRenders.autoComplete(d.enabled);
             }
 
-            // Forward down to child iframes if this is an outer container frame
             try {
                 var iframes = document.querySelectorAll("iframe");
                 for (var i = 0; i < iframes.length; i++) {
@@ -287,14 +775,54 @@ export function buildMenuScript(options: MenuOptions): string {
     window.__adventurerMenu = {
         update: function (opts) {
             if (opts) {
+                if (opts.questAppIds && opts.questAppIds.length > 0) {
+                    var currentAppId = "";
+                    try {
+                        var hostname = window.location.hostname || "";
+                        var dotIdx = hostname.indexOf(".");
+                        currentAppId = dotIdx > 0 ? hostname.substring(0, dotIdx) : hostname;
+                    } catch (e) {}
+                    if (currentAppId && opts.questAppIds.indexOf(currentAppId) === -1) {
+                        var bar = document.getElementById("adventurer-experience-bar");
+                        if (bar && bar.parentNode) bar.parentNode.removeChild(bar);
+                        return;
+                    }
+                }
+                if (typeof opts.isPip === "boolean") {
+                    state.isPip = opts.isPip;
+                    var bar = document.getElementById("adventurer-experience-bar");
+                    if (bar) {
+                        var isSmall = (window.innerWidth <= 520 || window.innerHeight <= 380);
+                        if (isSmall || state.isPip) bar.style.setProperty("display", "none", "important");
+                        else bar.style.removeProperty("display");
+                    }
+                }
                 if (typeof opts.esp === "boolean") { state.esp = opts.esp; if (switchRenders.esp) switchRenders.esp(opts.esp); }
                 if (typeof opts.minimap === "boolean") { state.minimap = opts.minimap; if (switchRenders.minimap) switchRenders.minimap(opts.minimap); }
                 if (typeof opts.autoComplete === "boolean") { state.autoComplete = opts.autoComplete; if (switchRenders.autoComplete) switchRenders.autoComplete(opts.autoComplete); }
+                if (typeof opts.recording === "boolean") {
+                    if (opts.recording && state.recordingState !== "recording") startRecordingSession();
+                    else if (!opts.recording && state.recordingState === "recording") stopRecordingSession(false);
+                }
             }
         },
         state: function () {
-            return { open: state.open, esp: state.esp, minimap: state.minimap, autoComplete: state.autoComplete };
-        }
+            return {
+                open: state.open,
+                esp: state.esp,
+                minimap: state.minimap,
+                autoComplete: state.autoComplete,
+                recording: state.recordingState === "recording",
+                recordingState: state.recordingState,
+                eventCount: state.eventCount,
+                elapsedSeconds: state.elapsedSeconds,
+                lastRecipe: state.lastRecipe,
+                isPip: state.isPip
+            };
+        },
+        startRecording: startRecordingSession,
+        stopRecording: function () { stopRecordingSession(true); },
+        resetRecording: resetRecordingSession
     };
 })();`;
 }

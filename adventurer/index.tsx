@@ -8,14 +8,27 @@ import { showNotification } from "@api/Notifications";
 
 import { buildCompletionMessage, buildCompletionScript, type CompletionQuestStatus } from "./experiences/completion";
 import { buildGraphScript } from "./experiences/graph";
-import { buildMenuMessage, buildMenuScript } from "./experiences/menu";
+import { buildMenuMessage, buildMenuScript, MENU_MESSAGE_TAG } from "./experiences/menu";
 import { buildMinimapMessage, buildMinimapScript } from "./experiences/minimap";
+import { buildRecorderScript } from "./experiences/recorder";
 import bundledRecipes from "./experiences/recipes.json";
 import { buildVolumeScript, pushVolume, VolumeControl } from "./experiences/volume";
+import {
+    openRecipeForwardModal,
+    forwardModalPatches,
+    installForwardModalDOMObserver,
+    removeForwardModalDOMObserver,
+    CommunityShareCheckbox
+} from "./sharing/forwardModal";
+import {
+    RecipeAccessory,
+    renderRecipeAccessory
+} from "./components/RecipeAccessory";
 
 const QuestStore = findStoreLazy("QuestStore");
 const RunningGameStore = findStoreLazy("RunningGameStore");
 const GameStore = findStoreLazy("GameStore");
+const PictureInPictureStore = findStoreLazy("PictureInPictureStore");
 
 function isAppRunning(appId: string): boolean {
     const games = RunningGameStore?.getRunningGames?.() ?? [];
@@ -1135,34 +1148,72 @@ function tryPatchNow() {
     if (video) patchQuestVideo(video);
 }
 
-const DISCORD_OVERLAY_TEXT = "We paused the video while you are away. Resume to continue progress.";
+const DISCORD_OVERLAY_TEXT_PATTERN = /^we paused the video while you are away\.?\s*resume to continue progress\.?$/i;
 const ADVENTURER_OVERLAY_TEXT = "Adventurer kept this quest playing while you're tabbed out!";
 
+function matchesPausedOverlayText(text: string | null | undefined): boolean {
+    return !!text && DISCORD_OVERLAY_TEXT_PATTERN.test(text.trim());
+}
+
+function patchTextNodesIn(root: Node) {
+    if (root.nodeType === Node.TEXT_NODE) {
+        if (matchesPausedOverlayText(root.textContent)) {
+            root.textContent = ADVENTURER_OVERLAY_TEXT;
+        }
+        return;
+    }
+
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    let current = walker.nextNode();
+    while (current) {
+        if (matchesPausedOverlayText(current.textContent)) {
+            current.textContent = ADVENTURER_OVERLAY_TEXT;
+        }
+        current = walker.nextNode();
+    }
+}
+
 function patchOverlayMessage() {
-    document.querySelectorAll("div[data-text-variant='text-sm/normal']").forEach(el => {
-        if (el.textContent === DISCORD_OVERLAY_TEXT) {
+    document.querySelectorAll("[data-text-variant]").forEach(el => {
+        if (el.children.length === 0 && matchesPausedOverlayText(el.textContent)) {
             el.textContent = ADVENTURER_OVERLAY_TEXT;
         }
     });
+
+    if (patchedVideo?.isConnected) {
+        const container = patchedVideo.closest("[role='dialog'], [data-quest-id]") ?? patchedVideo.parentElement;
+        if (container) {
+            patchTextNodesIn(container);
+        }
+    }
 }
 
 function startVideoObserver() {
     if (videoObserver) return;
 
-    videoObserver = new MutationObserver(() => {
+    videoObserver = new MutationObserver(mutations => {
         if (patchedVideo && !patchedVideo.isConnected) {
             unpatchQuestVideo();
         }
         if (!patchedVideo) {
             tryPatchNow();
         }
+        for (const mutation of mutations) {
+            if (mutation.type === "characterData") {
+                patchTextNodesIn(mutation.target);
+            } else {
+                mutation.addedNodes.forEach(node => patchTextNodesIn(node));
+            }
+        }
         patchOverlayMessage();
     });
 
     videoObserver.observe(document.body, {
         childList: true,
-        subtree: true
+        subtree: true,
+        characterData: true
     });
+    patchOverlayMessage();
 }
 
 function stopVideoObserver() {
@@ -1660,13 +1711,22 @@ function buildInjectedScript(): string {
     if (settings.store.experiencesHack) parts.push(buildOverlayScript());
     if (settings.store.experiencesMinimap) parts.push(buildMinimapScript(minimapOptions()));
     // The runner gets the bundled recipes and the quest status. native.ts fills in the local (Workbench) profiles.
-    if (settings.store.experiencesAutoComplete) {
-        parts.push(buildCompletionScript({ recipes: bundledRecipes, quests: completionQuests() }));
-    }
+    // When auto-complete is disabled, enabled: false keeps all game hooks unattached while allowing manual Test Run / Execute Recipe.
+    parts.push(buildCompletionScript({
+        recipes: bundledRecipes,
+        quests: completionQuests(),
+        enabled: !!settings.store.experiencesAutoComplete
+    }));
+    parts.push(buildRecorderScript());
+    const isPip = PictureInPictureStore?.isOpen ? PictureInPictureStore.isOpen() : false;
+    const questAppIds = allQuestApplicationIds();
+    _questAppIdsSig = JSON.stringify([...questAppIds].sort());
     parts.push(buildMenuScript({
         esp: !!settings.store.experiencesHack,
         minimap: !!settings.store.experiencesMinimap,
-        autoComplete: !!settings.store.experiencesAutoComplete
+        autoComplete: !!settings.store.experiencesAutoComplete,
+        questAppIds,
+        isPip
     }));
     return parts.join("\n;\n");
 }
@@ -1682,6 +1742,19 @@ function questApplicationIds(quest: any): string[] {
     add(getQuestAppId(quest));
     for (const task of Object.values<any>(quest?.config?.taskConfigV2?.tasks ?? {})) {
         for (const application of task?.applications ?? []) add(application?.id);
+    }
+    return [...ids];
+}
+
+// Every known and active quest application ID across all registered quests and bundled/saved profiles.
+function allQuestApplicationIds(): string[] {
+    const ids = new Set<string>();
+    for (const quest of getAllQuests()) {
+        if (!quest?.id) continue;
+        for (const appId of questApplicationIds(quest)) ids.add(appId);
+    }
+    for (const r of bundledRecipes) {
+        if (r && (r as any).application_id) ids.add(String((r as any).application_id));
     }
     return [...ids];
 }
@@ -1715,6 +1788,8 @@ const questSignature = (quests: Record<string, CompletionQuestStatus>) =>
 
 // The quest status the injected script was last built with, so quest events only re-inject when something changed.
 let _completionQuestSig = "";
+let _questAppIdsSig = "";
+let _completedQuestIds: Set<string> | null = null;
 
 function completionQuests(): Record<string, CompletionQuestStatus> {
     const quests = computeCompletionQuests();
@@ -1745,9 +1820,54 @@ function scheduleQuestSync() {
     }, 300);
 }
 
+function broadcastPipState(isPip: boolean) {
+    const msg = { [MENU_MESSAGE_TAG]: true, type: "pip_state", isPip };
+    document.querySelectorAll("iframe").forEach(frame => {
+        try {
+            if (!/(^|\.)discordsays\.com$/i.test(new URL((frame as HTMLIFrameElement).src).hostname)) return;
+            (frame as HTMLIFrameElement).contentWindow?.postMessage(msg, "*");
+        } catch { }
+    });
+}
+
+function broadcastQuestCompleted(questId: string, appIds: string[]) {
+    const msg = { [MENU_MESSAGE_TAG]: true, type: "DISCORD_QUEST_COMPLETED", questId, appIds };
+    document.querySelectorAll("iframe").forEach(frame => {
+        try {
+            const host = new URL((frame as HTMLIFrameElement).src).hostname;
+            if (!/(^|\.)discordsays\.com$/i.test(host)) return;
+            const frameAppId = host.split(".")[0];
+            if (appIds.length > 0 && !appIds.includes(frameAppId)) return;
+            (frame as HTMLIFrameElement).contentWindow?.postMessage(msg, "*");
+        } catch { }
+    });
+}
+
 function syncCompletionQuests() {
-    if (!settings.store.experiencesAutoComplete) return;
-    if (questSignature(computeCompletionQuests()) === _completionQuestSig) return;
+    const quests = computeCompletionQuests();
+    if (_completedQuestIds === null) {
+        _completedQuestIds = new Set<string>();
+        for (const status of Object.values(quests)) {
+            if (status.completed) _completedQuestIds.add(status.questId);
+        }
+    } else {
+        const newlyCompleted = new Map<string, string[]>();
+        for (const [appId, status] of Object.entries(quests)) {
+            if (status.completed && !_completedQuestIds.has(status.questId)) {
+                const arr = newlyCompleted.get(status.questId) ?? [];
+                arr.push(appId);
+                newlyCompleted.set(status.questId, arr);
+            }
+        }
+        for (const [questId, appIds] of newlyCompleted.entries()) {
+            _completedQuestIds.add(questId);
+            broadcastQuestCompleted(questId, appIds);
+        }
+    }
+    const currentAppIdsSig = JSON.stringify([...allQuestApplicationIds()].sort());
+    const appIdsChanged = currentAppIdsSig !== _questAppIdsSig;
+    const completionChanged = settings.store.experiencesAutoComplete && questSignature(quests) !== _completionQuestSig;
+    if (!appIdsChanged && !completionChanged) return;
     refreshInjectedScripts();
 }
 
@@ -1801,10 +1921,13 @@ async function startGameOverlay() {
 }
 
 function pushMenuState() {
+    const isPip = PictureInPictureStore?.isOpen ? PictureInPictureStore.isOpen() : false;
     const message = buildMenuMessage({
         esp: !!settings.store.experiencesHack,
         minimap: !!settings.store.experiencesMinimap,
-        autoComplete: !!settings.store.experiencesAutoComplete
+        autoComplete: !!settings.store.experiencesAutoComplete,
+        questAppIds: allQuestApplicationIds(),
+        isPip
     });
     document.querySelectorAll("iframe").forEach(frame => {
         try {
@@ -1814,17 +1937,57 @@ function pushMenuState() {
     });
 }
 
+let _suppressVolumePush = false;
+
 function handleExperienceToggle(e: MessageEvent) {
     const d = e && e.data;
-    if (!d || !d.__adventurerExperienceToggle) return;
-    if (d.feature === "esp") {
-        settings.store.experiencesHack = !!d.enabled;
-    } else if (d.feature === "minimap") {
-        settings.store.experiencesMinimap = !!d.enabled;
-    } else if (d.feature === "autoComplete") {
-        settings.store.experiencesAutoComplete = !!d.enabled;
+    if (!d) return;
+    if (d.__adventurerExperienceToggle) {
+        if (d.feature === "esp") {
+            settings.store.experiencesHack = !!d.enabled;
+        } else if (d.feature === "minimap") {
+            settings.store.experiencesMinimap = !!d.enabled;
+        } else if (d.feature === "autoComplete") {
+            settings.store.experiencesAutoComplete = !!d.enabled;
+        }
+        refreshInjectedScripts();
+    } else if (d.__adventurerExperienceVolume) {
+        _suppressVolumePush = true;
+        try {
+            if (typeof d.volume === "number") {
+                settings.store.experiencesVolume = Math.min(100, Math.max(0, Math.round(d.volume)));
+            }
+            if (typeof d.muted === "boolean") {
+                settings.store.experiencesMuted = d.muted;
+            }
+        } finally {
+            _suppressVolumePush = false;
+        }
+    } else if (d.__adventurerSaveRecipe || d.type === "SAVE_RECIPE" || d.type === "RECIPE_RECORDING_COMPLETED") {
+        const recipe = d.recipe;
+        if (recipe && Native?.saveRecipe) {
+            Native.saveRecipe(recipe).then(res => {
+                if (res?.ok) {
+                    showToastSafe({
+                        message: "Recipe saved to ~/.adventurer/recipes!",
+                        type: ToastType.SUCCESS,
+                        id: toastGenId()
+                    });
+                } else {
+                    console.error("[Adventurer] Failed to save recipe:", res?.error);
+                }
+            }).catch(err => {
+                console.error("[Adventurer] Error calling Native.saveRecipe:", err);
+            });
+        }
+    } else if (d.__adventurerShareRecipe || d.type === "SHARE_RECIPE") {
+        const recipe = d.recipe;
+        if (recipe && recipe.verifiedCompletion === true) {
+            openRecipeForwardModal(recipe);
+        } else {
+            console.warn("[Adventurer] Share blocked: recipe quest completion not verified.", recipe);
+        }
     }
-    refreshInjectedScripts();
 }
 
 // Re-evaluates which injected parts are wanted after a settings change: re-bakes what future frames get and tells
@@ -1841,7 +2004,7 @@ async function refreshInjectedScripts() {
 
 // Sends the current volume to the running activity frames and refreshes what future frames start with.
 function applyVolume() {
-    if (!settings.store.experiencesVolumeControl) return;
+    if (_suppressVolumePush || !settings.store.experiencesVolumeControl) return;
     pushVolume(settings.store.experiencesVolume, settings.store.experiencesMuted);
     if (Native) Native.setOverlayScript(buildInjectedScript()).catch(() => { });
 }
@@ -2979,11 +3142,21 @@ async function heartbeatTick() {
     scheduleNextHeartbeat(_heartbeatBackoffMs);
 }
 
+let _pipChangeListener: (() => void) | null = null;
+
 export default definePlugin({
     name: "Adventurer",
     description: "Auto-runs Discord quests sequentially with completion tracking.",
     authors: [{ name: "ren", id: 163734654040539136n }],
     settings,
+    dependencies: ["MessageAccessoriesAPI"],
+
+    renderMessageAccessory(props: any) {
+        return renderRecipeAccessory(props);
+    },
+
+    RecipeAccessory,
+    renderRecipeAccessory,
 
     shouldShowBar(quest: any) {
         if (settings.store.barHidden) return false;
@@ -3005,6 +3178,7 @@ export default definePlugin({
     },
 
     patches: [
+        ...forwardModalPatches,
         {
             find: '"quest bar rendered"',
             replacement: {
@@ -3036,6 +3210,8 @@ export default definePlugin({
             }
         }
     ],
+
+    CommunityShareCheckbox,
 
     QuestVolume() {
         const { experiencesVolumeControl } = settings.use(["experiencesVolumeControl"]);
@@ -3449,15 +3625,28 @@ export default definePlugin({
 
         startGameOverlay();
         QUEST_SYNC_EVENTS.forEach(type => FluxDispatcher.subscribe(type, scheduleQuestSync));
+        QuestStore?.addChangeListener?.(scheduleQuestSync);
 
         startUIObserver();
+        installForwardModalDOMObserver();
 
         window.addEventListener("message", handleExperienceToggle);
+
+        _pipChangeListener = () => {
+            const isPip = PictureInPictureStore?.isOpen ? PictureInPictureStore.isOpen() : false;
+            broadcastPipState(isPip);
+        };
+        PictureInPictureStore?.addChangeListener?.(_pipChangeListener);
 
         scheduleNextHeartbeat(0);
     },
 
     stop() {
+        if (_pipChangeListener) {
+            PictureInPictureStore?.removeChangeListener?.(_pipChangeListener);
+            _pipChangeListener = null;
+        }
+        QuestStore?.removeChangeListener?.(scheduleQuestSync);
         FluxDispatcher.unsubscribe("QUESTS_FETCH_CURRENT_QUESTS_SUCCESS", onQuestsFetched);
         FluxDispatcher.unsubscribe("QUESTS_SEND_HEARTBEAT_SUCCESS", processQuests);
         FluxDispatcher.unsubscribe("QUESTS_ENROLL_SUCCESS", onQuestsFetched);
@@ -3485,6 +3674,7 @@ export default definePlugin({
         unpatchQuestVideo();
         stopGameOverlay();
         stopUIObserver();
+        removeForwardModalDOMObserver();
         window.removeEventListener("message", handleExperienceToggle);
 
         queue.length = 0;
@@ -3494,6 +3684,10 @@ export default definePlugin({
         _heartbeatFailureCount = 0;
         _questIdsInitialized = false;
         _knownQuestIds.clear();
+        _completedQuestIds = null;
+        _questAppIdsSig = "";
         updateBar({ forceKillVisible: false });
     }
 });
+
+export { RecipeAccessory, renderRecipeAccessory };
