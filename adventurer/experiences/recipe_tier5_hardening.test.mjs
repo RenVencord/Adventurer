@@ -30,7 +30,7 @@ const esbuild = require(${JSON.stringify(esbuildPath)});
 export async function resolve(specifier, context, next) {
     if (specifier === "@webpack/common" || specifier === "react") {
         return {
-            url: "data:text/javascript,export const React = globalThis.React || { useReducer: (r, i) => [i, () => {}], useState: (s) => [s, () => {}], useEffect: () => {}, useCallback: (f) => f }; export default React; export const useReducer = React.useReducer; export const useState = React.useState; export const useEffect = React.useEffect; export const useCallback = React.useCallback; export const FluxDispatcher = {}; export const UserStore = {}; export const RestAPI = globalThis.__mockRestApi || {}; export const showToast = (opts) => { if (typeof globalThis.__onToast === 'function') globalThis.__onToast(opts); };",
+            url: "data:text/javascript,export const React = globalThis.React || { useReducer: (r, i) => [i, () => {}], useState: (s) => [s, () => {}], useEffect: () => {}, useCallback: (f) => f }; export default React; export const useReducer = React.useReducer; export const useState = React.useState; export const useEffect = React.useEffect; export const useCallback = React.useCallback; export const FluxDispatcher = {}; export const UserStore = {}; export const RestAPI = globalThis.__mockRestApi || {}; export const closeAllModals = () => {}; export const showToast = (opts) => { if (typeof globalThis.__onToast === 'function') globalThis.__onToast(opts); };",
             shortCircuit: true
         };
     }

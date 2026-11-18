@@ -1,6 +1,7 @@
+import { ApplicationCommandInputType, ApplicationCommandOptionType, findOption, sendBotMessage } from "@api/Commands";
 import { definePluginSettings } from "@api/Settings";
 import definePlugin, { OptionType, PluginNative } from "@utils/types";
-import { FluxDispatcher, UserStore, React, RestAPI, closeAllModals } from "@webpack/common";
+import { FluxDispatcher, OAuth2AuthorizeModal, openModal, UserStore, React, RestAPI, closeAllModals } from "@webpack/common";
 import { find, findStoreLazy, findByProps } from "@webpack";
 import { Button } from "@components/Button";
 import { showToast } from "@webpack/common";
@@ -29,6 +30,10 @@ const QuestStore = findStoreLazy("QuestStore");
 const RunningGameStore = findStoreLazy("RunningGameStore");
 const GameStore = findStoreLazy("GameStore");
 const PictureInPictureStore = findStoreLazy("PictureInPictureStore");
+const AuthenticationStore = findStoreLazy("AuthenticationStore");
+
+const ADVENTURER_BOT_ID = "1562027008119148604";
+const ADVENTURER_BOT_INSTALL_URL = `https://discord.com/oauth2/authorize?client_id=${ADVENTURER_BOT_ID}`;
 
 function isAppRunning(appId: string): boolean {
     const games = RunningGameStore?.getRunningGames?.() ?? [];
@@ -180,7 +185,7 @@ async function reportAssist(questId: string) {
     try {
         await requestServer("/assist", {
             method: "POST",
-            body: { questId: String(questId) }
+            body: { questId: String(questId), userId: getCurrentUserId() }
         });
     } catch { }
 }
@@ -3815,6 +3820,159 @@ export default definePlugin({
     ],
 
     CommunityShareCheckbox,
+
+    commands: [
+        {
+            name: "stats",
+            description: "Share your Adventurer quest statistics in this chat via Adventurer Bot.",
+            inputType: ApplicationCommandInputType.BUILT_IN,
+            options: [
+                {
+                    name: "private",
+                    description: "Only show the stats to yourself (default: false)",
+                    type: ApplicationCommandOptionType.BOOLEAN,
+                    required: false
+                },
+                {
+                    name: "scope",
+                    description: "Show stats for this Discord account or all accounts",
+                    type: ApplicationCommandOptionType.STRING,
+                    required: false,
+                    choices: [
+                        { label: "This Account", name: "This Account", value: "account" },
+                        { label: "All Accounts", name: "All Accounts", value: "all" }
+                    ]
+                }
+            ],
+            async execute(args: any[], ctx: any) {
+                const isPrivate = Boolean(findOption(args, "private", false));
+                const scope = findOption(args, "scope", "account");
+                const userId = getCurrentUserId();
+
+                if (!userId || userId === "unknown") {
+                    sendBotMessage(ctx.channel.id, {
+                        content: "Could not determine your Discord user ID."
+                    });
+                    return;
+                }
+
+                let statsToken: string;
+                try {
+                    const res = await requestServer(`/stats?userId=${encodeURIComponent(userId)}&scope=${encodeURIComponent(scope)}`);
+                    if (!res.ok) {
+                        throw new Error(`HTTP ${res.status}`);
+                    }
+                    const data = await res.json();
+                    if (!data?.token) {
+                        throw new Error("Missing stats token from Adventurer server");
+                    }
+                    statsToken = String(data.token);
+                } catch {
+                    sendBotMessage(ctx.channel.id, {
+                        content: "Adventurer desktop app is not running. Start Adventurer and try `/stats` again."
+                    });
+                    return;
+                }
+
+                const fetchBotCommand = async () => {
+                    try {
+                        const idxRes = await RestAPI.get({ url: "/users/@me/application-command-index" });
+                        const cmds: any[] = idxRes?.body?.application_commands ?? [];
+                        return cmds.find(
+                            c => String(c?.application_id) === ADVENTURER_BOT_ID && c?.name === "adventurer-stats"
+                        ) ?? null;
+                    } catch {
+                        return null;
+                    }
+                };
+
+                let botCmd = await fetchBotCommand();
+                if (!botCmd) {
+                    const authorized = await new Promise<boolean>(resolve => {
+                        if (typeof OAuth2AuthorizeModal === "function" && typeof openModal === "function") {
+                            let settled = false;
+                            try {
+                                openModal((props: any) => (
+                                    <OAuth2AuthorizeModal
+                                        {...props}
+                                        clientId={ADVENTURER_BOT_ID}
+                                        scopes={["applications.commands"]}
+                                        integrationType={1}
+                                        cancelCompletesFlow={false}
+                                        callback={() => {
+                                            settled = true;
+                                            resolve(true);
+                                        }}
+                                    />
+                                ), {
+                                    onCloseCallback() {
+                                        if (!settled) resolve(false);
+                                    }
+                                });
+                            } catch {
+                                resolve(false);
+                            }
+                        } else {
+                            window.open(ADVENTURER_BOT_INSTALL_URL, "_blank");
+                            resolve(false);
+                        }
+                    });
+
+                    if (!authorized) {
+                        sendBotMessage(ctx.channel.id, {
+                            content: `Authorize Adventurer Bot first to share stats via embeds: ${ADVENTURER_BOT_INSTALL_URL}`
+                        });
+                        return;
+                    }
+
+                    botCmd = await fetchBotCommand();
+                    if (!botCmd) {
+                        sendBotMessage(ctx.channel.id, {
+                            content: "Adventurer Bot was authorized, please run `/stats` again in a moment."
+                        });
+                        return;
+                    }
+                }
+
+                try {
+                    const sessionId = AuthenticationStore?.getSessionId?.() ?? crypto.randomUUID().replace(/-/g, "");
+                    const nonce = String((BigInt(Date.now() - 1420070400000) << 22n));
+                    const options: any[] = [
+                        { type: 3, name: "token", value: statsToken }
+                    ];
+                    if (isPrivate) {
+                        options.push({ type: 5, name: "private", value: true });
+                    }
+
+                    await RestAPI.post({
+                        url: "/interactions",
+                        body: {
+                            type: 2,
+                            application_id: ADVENTURER_BOT_ID,
+                            guild_id: ctx.guild?.id ?? null,
+                            channel_id: ctx.channel.id,
+                            session_id: sessionId,
+                            data: {
+                                version: botCmd.version,
+                                id: botCmd.id,
+                                name: botCmd.name,
+                                type: 1,
+                                options,
+                                application_command: botCmd,
+                                attachments: []
+                            },
+                            nonce
+                        }
+                    });
+                } catch (e: any) {
+                    console.error("[Adventurer] Failed to invoke Adventurer Bot /adventurer-stats:", e);
+                    sendBotMessage(ctx.channel.id, {
+                        content: `Failed to trigger Adventurer Bot stats command (${e?.message || "unknown error"}).`
+                    });
+                }
+            }
+        }
+    ],
 
     QuestVolume() {
         const { experiencesVolumeControl } = settings.use(["experiencesVolumeControl"]);

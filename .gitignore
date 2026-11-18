@@ -441,3 +441,4 @@ build_info.json
 scratch/
 stub
 stub.exe
+build_release.bat

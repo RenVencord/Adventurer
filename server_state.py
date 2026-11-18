@@ -255,7 +255,7 @@ def set_quests(user_id: str, username: str, avatar: str | None, quests: list[dic
 
             if not is_first:
                 if is_completed and not old_comp:
-                    stats_manager.record_completed_quest(q, user_id=user_id)
+                    stats_manager.record_completed_quest(q, user_id=user_id, username=username)
                     if _log_settings.get("completion", False):
                         _log.append(
                             {"ts": datetime.now().strftime("%H:%M:%S"), "msg": f"[{username}] Quest completed: {name}",
@@ -274,6 +274,7 @@ def set_quests(user_id: str, username: str, avatar: str | None, quests: list[dic
             u["seen_first"] = True
 
         u["quests"] = quests
+        stats_manager.set_account_username(user_id, username)
 
 
 def consume_new_quest_ids(user_id: str) -> set[str]:
@@ -373,15 +374,15 @@ def get_pending_plugin_restart() -> str | None:
         return _pending_plugin_restart
 
 
-def mark_quest_assisted(quest_id: str | None):
+def mark_quest_assisted(quest_id: str | None, user_id: str | None = None, username: str | None = None):
     if quest_id:
-        stats_manager.mark_quest_assisted(str(quest_id))
+        stats_manager.mark_quest_assisted(str(quest_id), user_id=user_id, username=username)
 
 
-def is_quest_assisted(quest_id: str | None) -> bool:
+def is_quest_assisted(quest_id: str | None, user_id: str | None = None) -> bool:
     if not quest_id:
         return False
-    return stats_manager.is_quest_assisted(str(quest_id))
+    return stats_manager.is_quest_assisted(str(quest_id), user_id=user_id)
 
 
 def set_active_quest(quest_id: str | None, quest_obj: dict | None, status_type: str | None = None, ends_at: int = 0):
@@ -421,7 +422,7 @@ def add_running_quest(
             "status_type": status_type or "running",
             "ends_at": ends_at,
         }
-        stats_manager.mark_quest_assisted(qid)
+        stats_manager.mark_quest_assisted(qid, user_id=user_id)
 
 
 def remove_running_quest(quest_id: str, user_id: str | None = None):

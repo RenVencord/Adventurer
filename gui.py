@@ -2510,6 +2510,14 @@ class StatisticsDialog(QDialog):
         header_text_col.addWidget(subtitle_lbl)
 
         header_row.addLayout(header_text_col, 1)
+
+        self.combo_account = QComboBox()
+        self.combo_account.setMinimumWidth(160)
+        style_combobox(self.combo_account)
+        self._populate_accounts(initial=True)
+        self.combo_account.currentIndexChanged.connect(self._refresh_stats)
+        header_row.addWidget(self.combo_account)
+
         root_layout.addLayout(header_row)
 
         # 2. Stats Overview Cards Container
@@ -2626,8 +2634,58 @@ class StatisticsDialog(QDialog):
 
         return card, lbl_val
 
+    def _populate_accounts(self, initial: bool = False):
+        prev_data = self.combo_account.currentData() if not initial else None
+        live_users = server_state.get_users()
+        tracked = stats_manager.get_tracked_accounts()
+
+        account_map: dict[str, str] = {}
+        for item in tracked:
+            uid = item["user_id"]
+            uname = item["username"]
+            if not uname and uid in live_users:
+                uname = live_users[uid].get("username") or ""
+            label = uname if uname else (f"Unknown ({uid})" if uid != "unknown" else "Legacy / Unknown")
+            account_map[uid] = label
+
+        for uid, uinfo in live_users.items():
+            if uid not in account_map:
+                uname = uinfo.get("username") or uid
+                account_map[uid] = uname
+
+        entries = [("all", "All Accounts")] + sorted(
+            account_map.items(),
+            key=lambda kv: (kv[0] == "unknown", kv[1].lower())
+        )
+
+        current_entries = [
+            (self.combo_account.itemData(i), self.combo_account.itemText(i))
+            for i in range(self.combo_account.count())
+        ]
+        if current_entries == entries:
+            return
+
+        self.combo_account.blockSignals(True)
+        self.combo_account.clear()
+        for uid, label in entries:
+            self.combo_account.addItem(label, uid)
+
+        target = prev_data
+        if initial:
+            selected_uid = server_state.get_selected_user_id()
+            if selected_uid and selected_uid in account_map:
+                target = selected_uid
+            else:
+                target = "all"
+
+        idx = self.combo_account.findData(target)
+        self.combo_account.setCurrentIndex(idx if idx >= 0 else 0)
+        self.combo_account.blockSignals(False)
+
     def _refresh_stats(self):
-        summary = stats_manager.get_stats_summary()
+        self._populate_accounts(initial=False)
+        selected_uid = self.combo_account.currentData() or "all"
+        summary = stats_manager.get_stats_summary(user_id=selected_uid)
         total = summary.get("total_quests", 0)
         orbs = summary.get("orbs_gained", 0)
         games = summary.get("game_quests", 0)
@@ -2645,15 +2703,22 @@ class StatisticsDialog(QDialog):
         self.lbl_experience_quests.setText(f"{exps:,}")
 
     def _on_reset(self):
+        selected_uid = self.combo_account.currentData() or "all"
+        selected_label = self.combo_account.currentText() or "All Accounts"
+        if selected_uid == "all":
+            msg = "Are you sure you want to reset Adventurer statistics for ALL accounts?\n\nThis will clear all tracked quest completions and orbs gained."
+        else:
+            msg = f"Are you sure you want to reset Adventurer statistics for {selected_label}?\n\nThis will clear all tracked quest completions and orbs gained for this account."
+
         reply = QMessageBox.question(
             self,
             "Reset Statistics",
-            "Are you sure you want to reset all Adventurer statistics?\n\nThis will clear all tracked quest completions and orbs gained.",
+            msg,
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No
         )
         if reply == QMessageBox.StandardButton.Yes:
-            stats_manager.reset_stats()
+            stats_manager.reset_stats(user_id=selected_uid)
             self._refresh_stats()
 
 
@@ -3435,7 +3500,7 @@ class MainWindow(QMainWindow):
                     qid = quest.get("id")
                     if qid in self._previously_incomplete and is_complete(quest):
                         self._previously_incomplete.discard(qid)
-                        if stats_manager.is_quest_assisted(qid):
+                        if stats_manager.is_quest_assisted(qid, user_id=selected_id):
                             stats_manager.record_completed_quest(quest, user_id=selected_id)
                         name = quest_name(quest)
                         orbs = quest_orbs(quest)

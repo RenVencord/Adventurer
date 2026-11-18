@@ -14,6 +14,7 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 
 import server_state
+import stats_manager
 
 # ---------------------------------------------------------------------------
 # Path helpers: resolve bundled assets (PyInstaller) and user data directory
@@ -889,12 +890,23 @@ def reset():
     return jsonify({"status": "reset"})
 
 
+@app.route("/stats", methods=["GET"])
+def get_stats():
+    user_id = request.args.get("userId") or server_state.get_selected_user_id() or ""
+    scope = request.args.get("scope", "account")
+    if not user_id:
+        return jsonify({"error": "No Discord userId provided"}), 400
+    result = stats_manager.build_signed_stats_token(user_id=user_id, scope=scope)
+    return jsonify(result)
+
+
 @app.route("/assist", methods=["POST"])
 def assist():
     body = request.get_json(silent=True) or {}
     quest_id = body.get("questId")
+    user_id = body.get("userId")
     if quest_id:
-        server_state.mark_quest_assisted(quest_id)
+        server_state.mark_quest_assisted(quest_id, user_id=user_id)
     return jsonify({"status": "ok", "questId": quest_id})
 
 
@@ -916,7 +928,7 @@ def heartbeat():
     assisted_from_plugin = body.get("assistedQuestIds")
     if assisted_from_plugin and isinstance(assisted_from_plugin, list):
         for aq_id in assisted_from_plugin:
-            server_state.mark_quest_assisted(aq_id)
+            server_state.mark_quest_assisted(aq_id, user_id=user_id, username=username)
 
     plugin_version = body.get("pluginVersion") or body.get("plugin_version")
     server_state.set_quests(user_id, username, avatar, quests, plugin_version=plugin_version)
