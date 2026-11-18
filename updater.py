@@ -92,13 +92,16 @@ class AutoUpdater:
         self.app_changelog = ""
 
         self.latest_plugin_version = ""
+        self.last_app_error = ""
+        self.last_plugin_error = ""
 
-    def check_app_update(self) -> tuple[bool, str, str, str]:
+    def check_app_update(self, ignore_skipped: bool = False) -> tuple[bool, str, str, str]:
+        self.last_app_error = ""
         scope = self.prefs.get("update_scope", "Any")
         if scope == "None":
             return False, "", "", ""
 
-        skipped = self.prefs.get("skipped_app_version", "")
+        skipped = "" if ignore_skipped else self.prefs.get("skipped_app_version", "")
         try:
             req = urllib.request.Request(RELEASES_API_URL, headers={"User-Agent": "Adventurer-Updater"})
             with urllib.request.urlopen(req, timeout=10) as resp:
@@ -121,15 +124,17 @@ class AutoUpdater:
                         _log(f"App update available: {tag}")
                         return True, self.latest_app_version, self.app_changelog, self.app_download_url
         except Exception as e:
+            self.last_app_error = str(e)
             _log(f"App update check failed: {e}")
         return False, "", "", ""
 
-    def check_plugin_update(self) -> tuple[bool, str]:
+    def check_plugin_update(self, ignore_skipped: bool = False) -> tuple[bool, str]:
+        self.last_plugin_error = ""
         scope = self.prefs.get("update_scope", "Any")
         if scope == "None":
             return False, ""
 
-        skipped = self.prefs.get("skipped_plugin_version", "")
+        skipped = "" if ignore_skipped else self.prefs.get("skipped_plugin_version", "")
         try:
             req = urllib.request.Request(MANIFEST_RAW_URL, headers={"User-Agent": "Adventurer-Updater"})
             with urllib.request.urlopen(req, timeout=10) as resp:
@@ -146,10 +151,15 @@ class AutoUpdater:
                         _log(f"Plugin update available: {remote_plugin_ver}")
                         return True, remote_plugin_ver
         except Exception as e:
+            self.last_plugin_error = str(e)
             _log(f"Plugin update check failed: {e}")
         return False, ""
 
     def download_app_update(self, download_url: str = None) -> bool:
+        if self.prefs.get("developer", False):
+            _log("Downloading app update executable... (developer mode: simulated, no changes made)")
+            return True
+
         url = download_url or self.app_download_url
         if not url:
             return False

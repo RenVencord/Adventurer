@@ -101,7 +101,8 @@ def load_prefs() -> dict:
         "vencord_source_dir": "",
         "skipped_app_version": "",
         "skipped_plugin_version": "",
-        "installed_plugin_version": ""
+        "installed_plugin_version": "",
+        "developer": False,
     }
     if os.path.exists(PREFS_FILE):
         try:
@@ -114,6 +115,7 @@ def load_prefs() -> dict:
         defaults["server_port"] = int(defaults.get("server_port", 5000))
     except (ValueError, TypeError):
         defaults["server_port"] = 5000
+    defaults["developer"] = bool(defaults.get("developer", False))
     return defaults
 
 
@@ -1462,11 +1464,13 @@ class SettingsDialog(QDialog):
 
 
 class UpdateSettingsDialog(QDialog):
-    def __init__(self, prefs: dict, parent=None):
+    def __init__(self, prefs: dict, parent=None, check_updates_fn=None):
         super().__init__(parent)
         self._prefs = prefs
+        self._check_updates_fn = check_updates_fn
+        self._local_check_thread = None
         self.setWindowTitle("Update Settings")
-        self.setFixedWidth(420)
+        self.setFixedWidth(440)
         self.setStyleSheet(f"""
             QDialog {{ background: {BG_DARK.name()}; color: {TEXT_PRIMARY.name()}; }}
             QLabel {{ color: {TEXT_PRIMARY.name()}; }}
@@ -1508,6 +1512,7 @@ class UpdateSettingsDialog(QDialog):
                 font-weight: 700;
             }}
             QPushButton:hover {{ background: #4752c4; }}
+            QPushButton:disabled {{ background: {BG_MID.name()}; color: {TEXT_MUTED.name()}; }}
         """)
 
         layout = QVBoxLayout(self)
@@ -1547,12 +1552,83 @@ class UpdateSettingsDialog(QDialog):
 
         layout.addLayout(form)
 
+        self.lbl_check_status = QLabel("")
+        self.lbl_check_status.setWordWrap(True)
+        self.lbl_check_status.setStyleSheet(f"color: {TEXT_MUTED.name()}; font-size: 11px;")
+        self.lbl_check_status.hide()
+        layout.addWidget(self.lbl_check_status)
+
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(8)
+
+        self.btn_check_updates = QPushButton("Check for updates")
+        self.btn_check_updates.clicked.connect(self._on_check_updates)
+        btn_row.addWidget(self.btn_check_updates)
+        btn_row.addStretch()
+
         btns = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
         )
         btns.accepted.connect(self.accept)
         btns.rejected.connect(self.reject)
-        layout.addWidget(btns)
+        btn_row.addWidget(btns)
+        layout.addLayout(btn_row)
+
+    def set_checking_state(self, checking: bool):
+        self.btn_check_updates.setEnabled(not checking)
+        self.btn_check_updates.setText("Checking..." if checking else "Check for updates")
+
+    def set_check_status(self, text: str, color: str | None = None):
+        c = color or TEXT_MUTED.name()
+        self.lbl_check_status.setStyleSheet(f"color: {c}; font-size: 11px;")
+        self.lbl_check_status.setText(text)
+        self.lbl_check_status.show()
+
+    def _on_check_updates(self):
+        check_prefs = self.get_prefs()
+        if check_prefs.get("update_scope", "Any") == "None":
+            check_prefs["update_scope"] = "Any"
+
+        self.set_checking_state(True)
+        self.set_check_status("Checking for updates...")
+
+        if self._check_updates_fn is not None:
+            self._check_updates_fn(check_prefs, self)
+            return
+
+        if self._local_check_thread and self._local_check_thread.isRunning():
+            return
+        self._local_check_thread = UpdateCheckerThread(
+            check_prefs, ignore_skipped=True, emit_individual_signals=False
+        )
+        self._local_check_thread.check_done_signal.connect(self._on_local_check_done)
+        self._local_check_thread.start()
+
+    def _on_local_check_done(self, result: dict):
+        self.set_checking_state(False)
+        if result.get("error") and not result.get("app_update") and not result.get("plugin_update"):
+            self.set_check_status(f"Update check failed: {result['error']}", "#f04747")
+            QMessageBox.warning(self, "Update Check Failed", f"Failed to check for updates:\n{result['error']}")
+        elif not result.get("app_update") and not result.get("plugin_update"):
+            self.set_check_status("You are up to date.", ACCENT_GREEN.name())
+            QMessageBox.information(self, "Up to Date", "Adventurer and the Vencord plugin are both up to date.")
+        else:
+            found = []
+            if result.get("app_update"):
+                found.append(f"App {result.get('app_version', '')}".strip())
+            if result.get("plugin_update"):
+                found.append(f"Plugin {result.get('plugin_version', '')}".strip())
+            self.set_check_status(f"Updates available: {', '.join(found)}", ACCENT_GOLD.name())
+
+    def reject(self):
+        if self._local_check_thread and self._local_check_thread.isRunning():
+            self._local_check_thread.wait(2000)
+        super().reject()
+
+    def closeEvent(self, event):
+        if self._local_check_thread and self._local_check_thread.isRunning():
+            self._local_check_thread.wait(2000)
+        super().closeEvent(event)
 
     def get_prefs(self) -> dict:
         p = dict(self._prefs)
@@ -2725,31 +2801,56 @@ class StatisticsDialog(QDialog):
 class UpdateCheckerThread(QThread):
     app_update_signal = pyqtSignal(str, str, str)
     plugin_update_signal = pyqtSignal(str)
+    check_done_signal = pyqtSignal(dict)
 
-    def __init__(self, prefs: dict):
+    def __init__(self, prefs: dict, ignore_skipped: bool = False, emit_individual_signals: bool = True):
         super().__init__()
         self.prefs = prefs
+        self.ignore_skipped = ignore_skipped
+        self.emit_individual_signals = emit_individual_signals
 
     def run(self):
+        result = {
+            "app_update": False,
+            "app_version": "",
+            "app_changelog": "",
+            "app_download_url": "",
+            "plugin_update": False,
+            "plugin_version": "",
+            "error": "",
+        }
         try:
             if server_state.should_log("updater"):
                 server_state.log_event("[Updater] Checking for updates...")
 
             upd = updater.AutoUpdater(self.prefs)
-            app_update, app_ver, changelog, d_url = upd.check_app_update()
+            app_update, app_ver, changelog, d_url = upd.check_app_update(ignore_skipped=self.ignore_skipped)
             if app_update:
-                self.app_update_signal.emit(app_ver, changelog, d_url)
+                result["app_update"] = True
+                result["app_version"] = app_ver
+                result["app_changelog"] = changelog
+                result["app_download_url"] = d_url
+                if self.emit_individual_signals:
+                    self.app_update_signal.emit(app_ver, changelog, d_url)
 
-            plugin_update, plug_ver = upd.check_plugin_update()
+            plugin_update, plug_ver = upd.check_plugin_update(ignore_skipped=self.ignore_skipped)
             if plugin_update:
-                self.plugin_update_signal.emit(plug_ver)
+                result["plugin_update"] = True
+                result["plugin_version"] = plug_ver
+                if self.emit_individual_signals:
+                    self.plugin_update_signal.emit(plug_ver)
 
-            if not app_update and not plugin_update:
+            errors = [e for e in (upd.last_app_error, upd.last_plugin_error) if e]
+            if errors and not app_update and not plugin_update:
+                result["error"] = "\n".join(errors)
+            elif not app_update and not plugin_update:
                 if server_state.should_log("updater"):
                     server_state.log_event("[Updater] Up to date (No updates found).")
         except Exception as e:
+            result["error"] = str(e)
             if server_state.should_log("updater"):
                 server_state.log_event(f"[Updater] Update check failed: {e}")
+        self.check_done_signal.emit(result)
 
 
 class PluginUpdateThread(QThread):
@@ -2761,6 +2862,14 @@ class PluginUpdateThread(QThread):
         self.vencord_dir = vencord_dir
 
     def run(self):
+        if self.prefs.get("developer", False):
+            if server_state.should_log("updater"):
+                server_state.log_event(
+                    "[Updater] Developer mode: simulating plugin update download and install (no files modified)."
+                )
+            self.finished_signal.emit(True, "")
+            return
+
         upd = updater.AutoUpdater(self.prefs)
         files = upd.fetch_latest_plugin_files()
         if files is None:
@@ -3067,6 +3176,7 @@ class MainWindow(QMainWindow):
 
         self._quest_svg_pm = _load_quest_svg(64)
         self._upd_checker = None
+        self._manual_upd_checker = None
         self._plugin_worker = None
         self._plugin_update_thread = None
 
@@ -3147,27 +3257,118 @@ class MainWindow(QMainWindow):
         self._upd_checker.plugin_update_signal.connect(self._handle_plugin_update)
         self._upd_checker.start()
 
-    def _handle_app_update(self, version: str, changelog: str, download_url: str):
-        mode = self._prefs.get("update_mode_app", "Ask")
+    def _manual_check_updates(self, check_prefs: dict, dialog: UpdateSettingsDialog):
+        if self._manual_upd_checker and self._manual_upd_checker.isRunning():
+            return
+
+        dialog_alive = [True]
+        dialog.destroyed.connect(lambda: dialog_alive.__setitem__(0, False))
+
+        def _active_dialog():
+            return dialog if dialog_alive[0] and dialog.isVisible() else None
+
+        def on_check_done(result: dict):
+            dlg = _active_dialog()
+            parent = dlg or self
+            if dlg is not None:
+                dlg.set_checking_state(False)
+
+            err = result.get("error", "")
+            has_app = bool(result.get("app_update"))
+            has_plugin = bool(result.get("plugin_update"))
+
+            if err and not has_app and not has_plugin:
+                if dlg is not None:
+                    dlg.set_check_status(f"Update check failed: {err}", "#f04747")
+                QMessageBox.warning(parent, "Update Check Failed", f"Failed to check for updates:\n{err}")
+                return
+
+            if not has_app and not has_plugin:
+                if dlg is not None:
+                    dlg.set_check_status("You are up to date.", ACCENT_GREEN.name())
+                QMessageBox.information(parent, "Up to Date", "Adventurer and the Vencord plugin are both up to date.")
+                return
+
+            if dlg is not None:
+                found = []
+                if has_app:
+                    found.append(f"App {result.get('app_version', '')}".strip())
+                if has_plugin:
+                    found.append(f"Plugin {result.get('plugin_version', '')}".strip())
+                dlg.set_check_status(f"Updates available: {', '.join(found)}", ACCENT_GOLD.name())
+
+            if has_app:
+                self._handle_app_update(
+                    result.get("app_version", ""),
+                    result.get("app_changelog", ""),
+                    result.get("app_download_url", ""),
+                    parent_widget=parent,
+                    mode_override=check_prefs.get("update_mode_app"),
+                    manual=True,
+                )
+
+            if has_plugin:
+                dlg = _active_dialog()
+                self._handle_plugin_update(
+                    result.get("plugin_version", ""),
+                    parent_widget=dlg or self,
+                    mode_override=check_prefs.get("update_mode_plugin"),
+                )
+
+        self._manual_upd_checker = UpdateCheckerThread(
+            check_prefs, ignore_skipped=True, emit_individual_signals=False
+        )
+        self._manual_upd_checker.check_done_signal.connect(on_check_done)
+        self._manual_upd_checker.start()
+
+    def _handle_app_update(
+        self,
+        version: str,
+        changelog: str,
+        download_url: str,
+        parent_widget=None,
+        mode_override: str | None = None,
+        manual: bool = False,
+    ):
+        parent = parent_widget or self
+        mode = mode_override or self._prefs.get("update_mode_app", "Ask")
+        is_dev = bool(self._prefs.get("developer", False))
         if mode == "Auto":
             upd = updater.AutoUpdater(self._prefs)
-            upd.download_app_update(download_url)
+            if upd.download_app_update(download_url) and is_dev and manual:
+                QMessageBox.information(
+                    parent,
+                    "App Update Simulated",
+                    f"Developer mode is enabled: simulated installing Adventurer {version} (no files were modified)."
+                )
         else:
-            dlg = AppUpdateDialog(version, changelog, download_url, self)
+            dlg = AppUpdateDialog(version, changelog, download_url, parent)
             res = dlg.exec()
             if res == QDialog.DialogCode.Accepted:
                 upd = updater.AutoUpdater(self._prefs)
-                upd.download_app_update(download_url)
+                if upd.download_app_update(download_url) and is_dev:
+                    QMessageBox.information(
+                        parent,
+                        "App Update Simulated",
+                        f"Developer mode is enabled: simulated installing Adventurer {version} (no files were modified)."
+                    )
             elif dlg.skip_requested:
                 self._prefs["skipped_app_version"] = version
                 save_prefs(self._prefs)
 
-    def _handle_plugin_update(self, version: str):
-        mode = self._prefs.get("update_mode_plugin", "Auto")
+    def _handle_plugin_update(
+        self,
+        version: str,
+        parent_widget=None,
+        mode_override: str | None = None,
+    ):
+        parent = parent_widget or self
+        is_dev = bool(self._prefs.get("developer", False))
+        mode = mode_override or self._prefs.get("update_mode_plugin", "Auto")
         vencord_dir = self._prefs.get("vencord_source_dir", "") or vencord_helper.find_vencord_dir()
-        if not vencord_dir or not os.path.exists(vencord_dir):
+        if not is_dev and (not vencord_dir or not os.path.exists(vencord_dir)):
             reply = QMessageBox.question(
-                self,
+                parent,
                 "Vencord Directory Required",
                 f"A new Adventurer Plugin update ({version}) is available, but your Vencord source directory is not configured.\n\nWould you like to open Settings to set up Vencord?",
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
@@ -3177,7 +3378,7 @@ class MainWindow(QMainWindow):
             return
 
         # A GitHub update would overwrite the local source checkout that is linked into Vencord.
-        if vencord_helper.is_source_checkout_plugin_dir(vencord_dir):
+        if not is_dev and vencord_helper.is_source_checkout_plugin_dir(vencord_dir):
             if server_state.should_log("updater"):
                 server_state.log_event(
                     f"[Updater] Plugin update {version} skipped: Vencord's plugin folder is the local source checkout."
@@ -3185,40 +3386,46 @@ class MainWindow(QMainWindow):
             return
 
         if mode == "Auto":
-            self._apply_plugin_update(version, vencord_dir, notify_failure=False)
+            self._apply_plugin_update(version, vencord_dir or "", notify_failure=False, parent_widget=parent_widget)
         else:
             reply = QMessageBox.question(
-                self,
+                parent,
                 "Adventurer Plugin Update Available",
                 f"A new Adventurer Vencord Plugin update ({version}) is available.\n\nWould you like to install and rebuild Vencord now?",
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
             )
             if reply == QMessageBox.StandardButton.Yes:
-                self._apply_plugin_update(version, vencord_dir, notify_failure=True)
+                self._apply_plugin_update(version, vencord_dir or "", notify_failure=True, parent_widget=parent_widget)
 
-    def _apply_plugin_update(self, version: str, vencord_dir: str, notify_failure: bool):
+    def _apply_plugin_update(self, version: str, vencord_dir: str, notify_failure: bool, parent_widget=None):
         busy = (self._plugin_update_thread, self._plugin_worker)
         if any(t is not None and t.isRunning() for t in busy):
             return
+
+        is_dev = bool(self._prefs.get("developer", False))
+        parent_alive = [True]
+        if parent_widget is not None and parent_widget is not self:
+            parent_widget.destroyed.connect(lambda: parent_alive.__setitem__(0, False))
+
+        def _msg_parent():
+            if parent_widget is not None and parent_alive[0] and parent_widget.isVisible():
+                return parent_widget
+            return self
 
         def on_update_finished(success, msg):
             if not success:
                 if server_state.should_log("updater"):
                     server_state.log_event(f"[Updater] Plugin update {version} failed: {msg}")
                 if notify_failure:
-                    QMessageBox.warning(self, "Plugin Update Failed", msg)
+                    QMessageBox.warning(_msg_parent(), "Plugin Update Failed", msg)
                 return
 
-            record_installed_plugin_version(self._prefs, version)
-
-            # The plugin in Vencord is now the downloaded one: building must not sync the bundled copy over it.
-            self._plugin_worker = vencord_helper.VencordBuildWorker(vencord_dir, mode="build", sync_plugin=False)
-
-            def on_build_finished(success, msg):
-                if success:
-                    server_state.set_pending_plugin_restart(version)
+            def on_build_finished(build_ok, build_msg):
+                if build_ok:
+                    if not is_dev:
+                        server_state.set_pending_plugin_restart(version)
                     QMessageBox.information(
-                        self,
+                        _msg_parent(),
                         "Plugin Updated & Vencord Rebuilt",
                         f"Adventurer Plugin has been updated to {version} and Vencord was successfully rebuilt!\n\n"
                         "Please reopen Discord or press Ctrl+R to reload changes.\n\n"
@@ -3226,7 +3433,20 @@ class MainWindow(QMainWindow):
                         "User Settings > Plugins (under Vencord) > Adventurer"
                     )
                 else:
-                    QMessageBox.warning(self, "Vencord Build Failed", f"Plugin files were updated, but Vencord build failed:\n{msg}")
+                    QMessageBox.warning(_msg_parent(), "Vencord Build Failed", f"Plugin files were updated, but Vencord build failed:\n{build_msg}")
+
+            if is_dev:
+                if server_state.should_log("updater"):
+                    server_state.log_event(
+                        f"[Updater] Developer mode: simulating Vencord rebuild for plugin {version} (no files modified)."
+                    )
+                on_build_finished(True, "")
+                return
+
+            record_installed_plugin_version(self._prefs, version)
+
+            # The plugin in Vencord is now the downloaded one: building must not sync the bundled copy over it.
+            self._plugin_worker = vencord_helper.VencordBuildWorker(vencord_dir, mode="build", sync_plugin=False)
             self._plugin_worker.finished_signal.connect(on_build_finished)
             self._plugin_worker.start()
 
@@ -3769,7 +3989,7 @@ class MainWindow(QMainWindow):
                 )
 
     def _open_updates_settings(self):
-        dlg = UpdateSettingsDialog(self._prefs, self)
+        dlg = UpdateSettingsDialog(self._prefs, self, check_updates_fn=self._manual_check_updates)
         if dlg.exec() == QDialog.DialogCode.Accepted:
             self._prefs = dlg.get_prefs()
             save_prefs(self._prefs)
