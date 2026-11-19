@@ -14,6 +14,7 @@ import { buildMinimapMessage, buildMinimapScript } from "./experiences/minimap";
 import { buildRecorderScript } from "./experiences/recorder";
 import bundledRecipes from "./experiences/recipes.json";
 import { buildVolumeScript, pushVolume, VolumeControl } from "./experiences/volume";
+import { installFocusSpoof, uninstallFocusSpoof } from "./focusSpoof";
 import {
     openRecipeForwardModal,
     forwardModalPatches,
@@ -214,6 +215,18 @@ const settings = definePluginSettings({
             } else {
                 stopVideoObserver();
                 unpatchQuestVideo();
+            }
+        }
+    },
+    enableFocusSpoof: {
+        type: OptionType.BOOLEAN,
+        description: "While a quest video is playing, make Discord believe the window is always focused and visible, so tab-out detection (focus-gated quest heartbeats, foreground telemetry, watch-time checks) never fires. Side effect while watching: your status stays online instead of going idle.",
+        default: true,
+        onChange(value: boolean) {
+            if (!value) {
+                uninstallFocusSpoof();
+            } else if (patchedVideo) {
+                installFocusSpoof();
             }
         }
     },
@@ -1165,6 +1178,9 @@ function patchQuestVideo(video: HTMLVideoElement) {
         console.log("[Adventurer] pause() blocked on quest video");
     };
     patchedVideo = video;
+    if (settings.store.enableFocusSpoof) {
+        installFocusSpoof();
+    }
 
     const questIdEl = document.querySelector("[data-quest-id]");
     const questId = (questIdEl as HTMLElement)?.dataset?.questId;
@@ -1185,6 +1201,7 @@ function unpatchQuestVideo() {
     patchedVideo.pause = originalPause;
     patchedVideo = null;
     originalPause = null;
+    uninstallFocusSpoof();
 }
 
 function tryPatchNow() {
@@ -4433,6 +4450,7 @@ export default definePlugin({
 
         stopVideoObserver();
         unpatchQuestVideo();
+        uninstallFocusSpoof();
         cancelMarathonCountdown();
         _marathonWatchedQuestId = null;
         _marathonPendingQuestId = null;

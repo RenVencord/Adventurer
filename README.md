@@ -1,8 +1,14 @@
 # <img src="assets/logo.png" height="24px"> Adventurer
 A Vencord plugin to automate Discord Quests.
 
+Have questions or want to share experiences? [Join our Discord!](https://discord.gg/2XhF3r4Avg)
+
+> [!CAUTION]
+> This plugin is use at your own risk. While this plugin goes through great lengths to ensure minimal detection is possible, Discord updates and gaps can still cause risk.
+
 ## Features
-- Freely tab out of video quests
+- Freely tab out of and autoplay all available video quests
+- Window focus spoof so Discord's tab-out detection never sees quest tab-outs
 - Watch mobile video quests on desktop
 - Spoof game exes for play quests
 - One click experience quests with ESP, minimap, and adaptive learning capabilities
@@ -15,6 +21,7 @@ A Vencord plugin to automate Discord Quests.
 ## Functionality
 
 ### Video Quests
+- **Focus Spoof** makes Discord believe the window is always focused and visible, so focus-gated quest heartbeats and foreground telemetry stay consistent with watch time while you are tabbed out. Active only while a quest video is playing.
 - **Precise** targets the video player HTML element (default)
 - **Quest** ID Match finds the quest ID in the video player HTML element and searches it in users active quests
 - **Duration** Match searches for videos that match the duration of users active quests
@@ -69,11 +76,8 @@ A Vencord plugin to automate Discord Quests.
     ```
 
 ## Planned Features
-- Better multi-account management
 - Better log output management
 - Quest claim fanfare
 - Better quest page direct
-- Statistics
 - Custom quest home page
-- Start individual quests
 - See quest expiration date
