@@ -643,7 +643,7 @@ class VencordBuildWorker(QThread):
             elif pm:
                 inject_cmd = [pm_bin, "run", "inject", "--", "--branch", branch_arg]
             elif os.path.isfile(direct_exe):
-                inject_cmd = [direct_exe, "-install", "-branch", branch_arg]
+                inject_cmd = [direct_exe, "install", "-branch", branch_arg]
             else:
                 self.log_signal.emit(f"Error: No package manager or installer binary found to inject {target_label}.")
                 overall_ok = False
