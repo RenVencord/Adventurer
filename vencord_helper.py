@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import sys
 import shutil
 import subprocess
@@ -15,6 +16,32 @@ VENCORD_REPO_URL = "https://github.com/Vendicated/Vencord"
 SYNC_INSTALLED = "installed"
 SYNC_SOURCE_CHECKOUT = "source_checkout"
 SYNC_INSTALLED_NEWER = "installed_newer"
+
+# esbuild reports an unresolvable plugin entry as: Could not resolve "./plugins/<name>"
+_UNRESOLVED_PLUGIN_RE = re.compile(r'Could not resolve "\./((?:user)?plugins)/([^"\s]+)"')
+
+
+def broken_plugin_hint(build_output: str) -> str:
+    """Hint for Vencord build failures caused by an unrelated broken plugin folder.
+
+    Vencord's build imports every non-hidden entry of src/plugins and src/userplugins, so a
+    leftover third-party plugin folder without an index file fails the whole build with
+    'Could not resolve'. Returns "" when nothing matches, and also when the Adventurer plugin
+    itself fails to resolve: that is a genuine Adventurer error that must be surfaced verbatim.
+    """
+    matches = _UNRESOLVED_PLUGIN_RE.findall(build_output)
+    if not matches:
+        return ""
+    if any(name == plugin_files.PLUGIN_DIR_NAME or name.startswith(plugin_files.PLUGIN_DIR_NAME + "/")
+           for _, name in matches):
+        return ""
+    location, folder = matches[0]
+    return (
+        f"\n\nThis failure is caused by a broken plugin folder '{folder}' in Vencord's src/{location} "
+        "directory: a third-party plugin that was incompletely installed or removed (its entry point "
+        f"is missing). Delete the folder 'src/{location}/{folder}' in your Vencord source directory, "
+        "or reinstall that plugin completely, then build again. The Adventurer plugin itself is not affected."
+    )
 
 
 def get_bundled_plugin_path() -> str:
@@ -83,21 +110,21 @@ def find_installed_discords() -> list[dict]:
             if not os.path.isdir(base_dir):
                 continue
 
-            # Look for versioned folders app-<version>
+            # Look for versioned folders app-<version>. Match the Vencord installer's rule and
+            # require a resources folder inside, so leftover folders (e.g. only Update.exe left
+            # behind after an uninstall) are not offered and then fail with "not found".
             app_dirs = []
             try:
                 for entry in os.listdir(base_dir):
-                    if entry.startswith("app-") and os.path.isdir(os.path.join(base_dir, entry)):
+                    if (entry.startswith("app-")
+                            and os.path.isdir(os.path.join(base_dir, entry))
+                            and os.path.isdir(os.path.join(base_dir, entry, "resources"))):
                         app_dirs.append(entry)
             except Exception:
                 continue
 
             if not app_dirs:
-                try:
-                    if not any(f.lower().endswith(".exe") for f in os.listdir(base_dir)):
-                        continue
-                except Exception:
-                    continue
+                continue
 
             app_dirs.sort()
             latest_app = app_dirs[-1] if app_dirs else ""
@@ -420,7 +447,7 @@ def _install_prerequisites_windows(need_git: bool, need_node: bool, need_pm: boo
         try:
             res = subprocess.run(
                 ["winget", "install", "--id", "Git.Git"] + winget_flags,
-                capture_output=True, text=True, shell=True, env=os.environ.copy()
+                capture_output=True, text=True, encoding="utf-8", errors="replace", shell=True, env=os.environ.copy()
             )
             _refresh_path()
             if not shutil.which("git"):
@@ -439,7 +466,7 @@ def _install_prerequisites_windows(need_git: bool, need_node: bool, need_pm: boo
             try:
                 res = subprocess.run(
                     [pnpm_bin, "env", "use", "--global", "lts"],
-                    capture_output=True, text=True, shell=True, env=os.environ.copy()
+                    capture_output=True, text=True, encoding="utf-8", errors="replace", shell=True, env=os.environ.copy()
                 )
                 _refresh_path()
                 if shutil.which("node"):
@@ -458,14 +485,14 @@ def _install_prerequisites_windows(need_git: bool, need_node: bool, need_pm: boo
             try:
                 res = subprocess.run(
                     ["winget", "install", "--id", "OpenJS.NodeJS.LTS"] + winget_flags,
-                    capture_output=True, text=True, shell=True, env=os.environ.copy()
+                    capture_output=True, text=True, encoding="utf-8", errors="replace", shell=True, env=os.environ.copy()
                 )
                 _refresh_path()
                 if not shutil.which("node"):
                     _log("Trying winget OpenJS.NodeJS...")
                     res = subprocess.run(
                         ["winget", "install", "--id", "OpenJS.NodeJS"] + winget_flags,
-                        capture_output=True, text=True, shell=True, env=os.environ.copy()
+                        capture_output=True, text=True, encoding="utf-8", errors="replace", shell=True, env=os.environ.copy()
                     )
                     _refresh_path()
 
@@ -483,7 +510,7 @@ def _install_prerequisites_windows(need_git: bool, need_node: bool, need_pm: boo
         if shutil.which("npm"):
             _log("Installing pnpm globally via npm for faster Vencord builds...")
             try:
-                subprocess.run(["npm", "install", "-g", "pnpm"], capture_output=True, text=True, shell=True, env=os.environ.copy())
+                subprocess.run(["npm", "install", "-g", "pnpm"], capture_output=True, text=True, encoding="utf-8", errors="replace", shell=True, env=os.environ.copy())
                 _refresh_path()
                 if shutil.which("pnpm"):
                     _log("pnpm installed successfully.")
@@ -492,7 +519,7 @@ def _install_prerequisites_windows(need_git: bool, need_node: bool, need_pm: boo
         elif winget:
             _log("Installing pnpm via winget...")
             try:
-                subprocess.run(["winget", "install", "--id", "pnpm.pnpm"] + winget_flags, capture_output=True, text=True, shell=True, env=os.environ.copy())
+                subprocess.run(["winget", "install", "--id", "pnpm.pnpm"] + winget_flags, capture_output=True, text=True, encoding="utf-8", errors="replace", shell=True, env=os.environ.copy())
                 _refresh_path()
             except Exception:
                 pass
@@ -538,8 +565,8 @@ def _install_prerequisites_linux(need_git: bool, need_node: bool, need_pm: bool 
         _log(f"{needed_str.capitalize()} missing. Requesting authorization to install via PolicyKit (pkexec)...")
         try:
             if update_cmd:
-                subprocess.run(["pkexec"] + update_cmd, capture_output=True, text=True, env=os.environ.copy())
-            res = subprocess.run(["pkexec"] + install_cmd, capture_output=True, text=True, env=os.environ.copy())
+                subprocess.run(["pkexec"] + update_cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", env=os.environ.copy())
+            res = subprocess.run(["pkexec"] + install_cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", env=os.environ.copy())
             _refresh_path()
             if (not need_git or shutil.which("git")) and (not need_node or shutil.which("node")) and (not need_pm or _get_pm_command()):
                 _log("Prerequisites installed successfully on Linux.")
@@ -657,6 +684,8 @@ class VencordBuildWorker(QThread):
                 cwd=self.vencord_dir,
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 shell=True,
                 env=os.environ.copy()
             )
@@ -667,7 +696,12 @@ class VencordBuildWorker(QThread):
                     if line.strip():
                         self.log_signal.emit(f"  {line}")
 
-            if res.returncode != 0:
+            # Vencord's runInstaller.mjs catches the installer's non-zero exit and exits 0 itself,
+            # printing this exact line only when the installer failed. So the return code alone
+            # would report Success even for e.g. "Discord canary not found".
+            failed = res.returncode != 0 or "Something went wrong" in out_text
+
+            if failed:
                 # If package manager inject failed and direct_exe exists, retry with direct binary
                 if os.path.isfile(direct_exe) and inject_cmd[0] != direct_exe:
                     self.log_signal.emit(f"Retrying injection directly via {installer_name}...")
@@ -677,6 +711,8 @@ class VencordBuildWorker(QThread):
                         cwd=self.vencord_dir,
                         capture_output=True,
                         text=True,
+                        encoding="utf-8",
+                        errors="replace",
                         shell=True,
                         env=os.environ.copy()
                     )
@@ -685,12 +721,13 @@ class VencordBuildWorker(QThread):
                         for line in direct_out.splitlines():
                             if line.strip():
                                 self.log_signal.emit(f"  {line}")
-                    if res_direct.returncode == 0:
+                    if res_direct.returncode == 0 and "Something went wrong" not in direct_out:
                         results.append(f"{target_label}: Success")
                         continue
 
                 overall_ok = False
-                results.append(f"{target_label}: Failed (code {res.returncode})")
+                detail = f"code {res.returncode}" if res.returncode != 0 else "installer reported an error"
+                results.append(f"{target_label}: Failed ({detail})")
             else:
                 results.append(f"{target_label}: Success")
 
@@ -750,7 +787,7 @@ class VencordBuildWorker(QThread):
                         self.finished_signal.emit(False, "Git was not found in PATH.")
                         return
                     try:
-                        res = subprocess.run(["git", "clone", VENCORD_REPO_URL, self.vencord_dir], capture_output=True, text=True, shell=True, env=os.environ.copy())
+                        res = subprocess.run(["git", "clone", VENCORD_REPO_URL, self.vencord_dir], capture_output=True, text=True, encoding="utf-8", errors="replace", shell=True, env=os.environ.copy())
                         if res.returncode != 0:
                             self.finished_signal.emit(False, f"Git clone failed: {res.stderr or res.stdout}")
                             return
@@ -763,14 +800,15 @@ class VencordBuildWorker(QThread):
 
             self.log_signal.emit(f"Running '{pm} install'...")
             install_cmd = [pm, "install", "--frozen-lockfile"] if pm == "pnpm" else [pm, "install"]
-            res = subprocess.run(install_cmd, cwd=self.vencord_dir, capture_output=True, text=True, shell=True, env=os.environ.copy())
+            res = subprocess.run(install_cmd, cwd=self.vencord_dir, capture_output=True, text=True, encoding="utf-8", errors="replace", shell=True, env=os.environ.copy())
             if res.returncode != 0:
                 self.log_signal.emit(f"Warning: Install completed with code {res.returncode}")
 
             self.log_signal.emit(f"Building Vencord ('{' '.join(build_cmd)}')...")
-            res = subprocess.run(build_cmd, cwd=self.vencord_dir, capture_output=True, text=True, shell=True, env=os.environ.copy())
+            res = subprocess.run(build_cmd, cwd=self.vencord_dir, capture_output=True, text=True, encoding="utf-8", errors="replace", shell=True, env=os.environ.copy())
             if res.returncode != 0:
-                self.finished_signal.emit(False, f"Vencord build failed: {res.stderr or res.stdout}")
+                build_out = f"{res.stderr or res.stdout}"
+                self.finished_signal.emit(False, f"Vencord build failed: {build_out}{broken_plugin_hint(build_out)}")
                 return
 
             inject_ok, inject_msg = self._execute_injection(pm)
@@ -796,9 +834,10 @@ class VencordBuildWorker(QThread):
             dist_dir = os.path.join(self.vencord_dir, "dist")
             if not os.path.isdir(dist_dir) or not os.listdir(dist_dir):
                 self.log_signal.emit("Vencord is not built yet. Building first ('pnpm run build')...")
-                res = subprocess.run(build_cmd, cwd=self.vencord_dir, capture_output=True, text=True, shell=True, env=os.environ.copy())
+                res = subprocess.run(build_cmd, cwd=self.vencord_dir, capture_output=True, text=True, encoding="utf-8", errors="replace", shell=True, env=os.environ.copy())
                 if res.returncode != 0:
-                    self.finished_signal.emit(False, f"Build failed before injection: {res.stderr or res.stdout}")
+                    build_out = f"{res.stderr or res.stdout}"
+                    self.finished_signal.emit(False, f"Build failed before injection: {build_out}{broken_plugin_hint(build_out)}")
                     return
 
             inject_ok, inject_msg = self._execute_injection(pm)
@@ -832,24 +871,25 @@ class VencordBuildWorker(QThread):
             if not os.path.isdir(os.path.join(self.vencord_dir, "node_modules")):
                 self.log_signal.emit(f"Dependencies not installed. Running '{pm} install'...")
                 install_cmd = [pm, "install", "--frozen-lockfile"] if pm == "pnpm" else [pm, "install"]
-                res = subprocess.run(install_cmd, cwd=self.vencord_dir, capture_output=True, text=True, shell=True, env=os.environ.copy())
+                res = subprocess.run(install_cmd, cwd=self.vencord_dir, capture_output=True, text=True, encoding="utf-8", errors="replace", shell=True, env=os.environ.copy())
                 if res.returncode != 0:
                     self.log_signal.emit(f"Warning: Install completed with code {res.returncode}")
 
             self.log_signal.emit(f"Building Vencord ('{' '.join(build_cmd)}')...")
-            res = subprocess.run(build_cmd, cwd=self.vencord_dir, capture_output=True, text=True, shell=True, env=os.environ.copy())
+            res = subprocess.run(build_cmd, cwd=self.vencord_dir, capture_output=True, text=True, encoding="utf-8", errors="replace", shell=True, env=os.environ.copy())
             if res.returncode != 0:
                 # If build failed due to dependency sync issue or broken previous install, retry with clean install
                 combined = f"{res.stderr}\n{res.stdout}"
                 if any(k in combined.lower() for k in ("out of sync", "lifecycle", "failed to run", "cannot find module")):
                     self.log_signal.emit(f"Build failed due to dependency sync issue. Running '{pm} install'...")
                     install_cmd = [pm, "install"]
-                    subprocess.run(install_cmd, cwd=self.vencord_dir, capture_output=True, text=True, shell=True, env=os.environ.copy())
+                    subprocess.run(install_cmd, cwd=self.vencord_dir, capture_output=True, text=True, encoding="utf-8", errors="replace", shell=True, env=os.environ.copy())
                     self.log_signal.emit(f"Retrying Vencord build ('{' '.join(build_cmd)}')...")
-                    res = subprocess.run(build_cmd, cwd=self.vencord_dir, capture_output=True, text=True, shell=True, env=os.environ.copy())
+                    res = subprocess.run(build_cmd, cwd=self.vencord_dir, capture_output=True, text=True, encoding="utf-8", errors="replace", shell=True, env=os.environ.copy())
 
             if res.returncode != 0:
-                self.finished_signal.emit(False, f"Vencord build failed: {res.stderr or res.stdout}")
+                build_out = f"{res.stderr or res.stdout}"
+                self.finished_signal.emit(False, f"Vencord build failed: {build_out}{broken_plugin_hint(build_out)}")
                 return
 
             self.finished_signal.emit(True, "Vencord built successfully!")

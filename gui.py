@@ -1922,6 +1922,15 @@ class VencordManagerDialog(QDialog):
         self.vencord_log.hide()
         layout.addWidget(self.vencord_log)
 
+        self.btn_copy_logs = QPushButton("Copy Logs")
+        self.btn_copy_logs.setToolTip("Copy the Vencord build/inject log to the clipboard")
+        self.btn_copy_logs.clicked.connect(self._copy_vencord_logs)
+        self.btn_copy_logs.hide()
+        copy_row = QHBoxLayout()
+        copy_row.addStretch(1)
+        copy_row.addWidget(self.btn_copy_logs)
+        layout.addLayout(copy_row)
+
         self.button_box = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
         )
@@ -1951,7 +1960,13 @@ class VencordManagerDialog(QDialog):
     def _show_console(self):
         if not self.vencord_log.isVisible():
             self.vencord_log.show()
+            self.btn_copy_logs.show()
             self.resize(500, 380)
+
+    def _copy_vencord_logs(self):
+        QApplication.clipboard().setText(self.vencord_log.toPlainText())
+        self.btn_copy_logs.setText("Copied!")
+        QTimer.singleShot(1500, lambda: self.btn_copy_logs.setText("Copy Logs"))
 
     def _browse_vencord_dir(self):
         curr = self.txt_vencord_dir.text().strip() or os.path.expanduser("~")
